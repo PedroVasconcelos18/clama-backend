@@ -68,6 +68,8 @@ DJANGO_APPS = [
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
+    "drf_spectacular",
+    "corsheaders",
 ]
 LOCAL_APPS = [
     "clama_backend.users",
@@ -112,6 +114,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#middleware
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.locale.LocaleMiddleware",
@@ -121,6 +124,11 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# CORS
+# ------------------------------------------------------------------------------
+# https://github.com/adamchainz/django-cors-headers
+CORS_ALLOWED_ORIGINS = env.list("DJANGO_CORS_ALLOWED_ORIGINS", default=[])
 
 # STATIC
 # ------------------------------------------------------------------------------
@@ -298,4 +306,17 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.AllowAny",),
     "EXCEPTION_HANDLER": "clama.core.handlers.pastoral_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+# drf-spectacular
+# -------------------------------------------------------------------------------
+# https://drf-spectacular.readthedocs.io/en/latest/settings.html
+from clama.core import __version__ as CLAMA_VERSION
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Clama API",
+    "DESCRIPTION": "API do Clama - Plataforma de oração pastoral personalizada",
+    "VERSION": CLAMA_VERSION,
+    "SERVE_INCLUDE_SCHEMA": False,
 }

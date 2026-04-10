@@ -57,5 +57,13 @@ if env("USE_DOCKER", default="no") == "yes":
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#task-eager-propagates
 CELERY_TASK_EAGER_PROPAGATES = True
 
+# CORS
+# ------------------------------------------------------------------------------
+# Em desenvolvimento, permite localhost:5173 (Vite)
+CORS_ALLOWED_ORIGINS = env.list(
+    "DJANGO_CORS_ALLOWED_ORIGINS",
+    default=["http://localhost:5173", "http://127.0.0.1:5173"],
+)
+
 # Your stuff...
 # ------------------------------------------------------------------------------

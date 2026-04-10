@@ -5,6 +5,10 @@ django-environ>=0.11.2
 
 # Django REST Framework
 djangorestframework>=3.15.0
+drf-spectacular>=0.27.0
+
+# CORS
+django-cors-headers>=4.3.0
 
 # Database
 # ------------------------------------------------------------------------------
