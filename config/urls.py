@@ -18,3 +18,8 @@ if settings.DEBUG:
         import debug_toolbar
 
         urlpatterns = [path("__debug__/", include(debug_toolbar.urls))] + urlpatterns
+
+    # Sentry debug endpoint (apenas em DEBUG)
+    from clama.core.views import SentryDebugView
+
+    urlpatterns += [path("api/_sentry-debug/", SentryDebugView.as_view())]

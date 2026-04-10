@@ -121,3 +121,47 @@ clama-backend/
 - `POSTGRES_DB`: clama_backend
 - `POSTGRES_USER`: clama_backend
 - `POSTGRES_PASSWORD`: (senha local)
+
+## Observabilidade
+
+### Sentry
+
+O projeto usa Sentry para captura de erros e performance monitoring.
+
+**Variáveis de ambiente (obrigatórias em produção):**
+
+- `SENTRY_DSN`: DSN do projeto Sentry (obtido em https://sentry.io/settings/projects/{project}/keys/)
+- `SENTRY_ENVIRONMENT`: Ambiente (local, staging, production)
+
+**Configuração:**
+
+1. Crie um projeto no Sentry (https://sentry.io)
+2. Copie o DSN do projeto
+3. Configure as variáveis de ambiente em `.envs/.production/.django`
+
+**Validação da integração (apenas em DEBUG):**
+
+```bash
+# Acesse o endpoint de debug para verificar se o Sentry está configurado
+curl http://localhost:8000/api/_sentry-debug/
+# Este endpoint lança um ZeroDivisionError que aparecerá no dashboard Sentry
+```
+
+### Logging
+
+O logging usa formato JSON estruturado via `python-json-logger`.
+
+**Regras de PII (Dados Pessoais):**
+
+NUNCA logar:
+- Nome completo da usuária
+- E-mail, telefone
+- Conteúdo do pedido de oração
+- Texto da oração gerada
+
+Logar apenas:
+- `pedido.id` (UUID)
+- `plano.slug`
+- Status
+- Timestamps
+- Códigos de erro

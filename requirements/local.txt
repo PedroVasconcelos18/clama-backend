@@ -6,6 +6,7 @@ django-debug-toolbar>=4.4.0
 ipdb>=0.13.13
 watchfiles>=0.21.0
 flower>=2.0.0
+sentry-sdk[django,celery]>=2.0.0
 
 # Testing
 # ------------------------------------------------------------------------------
