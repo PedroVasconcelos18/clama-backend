@@ -68,12 +68,20 @@ DJANGO_APPS = [
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
+    "rest_framework_simplejwt",
     "drf_spectacular",
     "corsheaders",
+    "anymail",
 ]
 LOCAL_APPS = [
     "clama_backend.users",
     "clama.core",
+    "clama.plans",
+    "clama.orders",
+    "clama.prompts",
+    "clama.payments",
+    "clama.prayer_generation",
+    "clama.notifications",
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -256,16 +264,11 @@ LOGGING = {
 # https://docs.sentry.io/platforms/python/guides/django/
 SENTRY_DSN = env("SENTRY_DSN", default="")
 if SENTRY_DSN:
-    import sentry_sdk
-    from sentry_sdk.integrations.celery import CeleryIntegration
-    from sentry_sdk.integrations.django import DjangoIntegration
+    from clama.core.sentry_config import init_sentry
 
-    sentry_sdk.init(
+    init_sentry(
         dsn=SENTRY_DSN,
         environment=env("SENTRY_ENVIRONMENT", default="local"),
-        integrations=[DjangoIntegration(), CeleryIntegration()],
-        traces_sample_rate=0.1,
-        send_default_pii=False,
     )
 
 # Celery
@@ -301,12 +304,35 @@ CELERY_TASK_SEND_SENT_EVENT = True
 # django-rest-framework - https://www.django-rest-framework.org/api-guide/settings/
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
-        "rest_framework.authentication.TokenAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.AllowAny",),
+    "DEFAULT_THROTTLE_CLASSES": ("rest_framework.throttling.AnonRateThrottle",),
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "60/min",
+        "pedidos_create": "10/min",
+        "pedidos_status": "60/min",
+        "pedidos_checkout": "10/min",
+        "admin_login": "5/min",
+    },
     "EXCEPTION_HANDLER": "clama.core.handlers.pastoral_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+# djangorestframework-simplejwt
+# -------------------------------------------------------------------------------
+# https://django-rest-framework-simplejwt.readthedocs.io/en/latest/settings.html
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=24),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
 }
 
 # drf-spectacular
@@ -320,3 +346,49 @@ SPECTACULAR_SETTINGS = {
     "VERSION": CLAMA_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
 }
+
+# Encrypted Model Fields
+# -------------------------------------------------------------------------------
+# https://pypi.org/project/django-encrypted-model-fields/
+# Chave Fernet para criptografia de dados sensíveis (LGPD)
+# Gerar com: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+FIELD_ENCRYPTION_KEY = env(
+    "FIELD_ENCRYPTION_KEY",
+    default="",  # OBRIGATÓRIO em produção
+)
+
+# Asaas Payment Gateway
+# -------------------------------------------------------------------------------
+# https://docs.asaas.com/reference
+ASAAS_API_KEY = env("ASAAS_API_KEY", default="")
+ASAAS_BASE_URL = env(
+    "ASAAS_BASE_URL",
+    default="https://sandbox.asaas.com/api/v3",
+)
+
+# Frontend URL (for redirect callbacks)
+# -------------------------------------------------------------------------------
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+
+# Anthropic (Claude API)
+# -------------------------------------------------------------------------------
+# https://docs.anthropic.com/en/api
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
+
+# Z-API (WhatsApp)
+# -------------------------------------------------------------------------------
+# https://developer.z-api.io/
+ZAPI_INSTANCE_ID = env("ZAPI_INSTANCE_ID", default="")
+ZAPI_TOKEN = env("ZAPI_TOKEN", default="")
+ZAPI_BASE_URL = env("ZAPI_BASE_URL", default="https://api.z-api.io")
+
+# Email (Resend via Anymail)
+# -------------------------------------------------------------------------------
+# https://anymail.dev/en/stable/esps/resend/
+ANYMAIL = {
+    "RESEND_API_KEY": env("RESEND_API_KEY", default=""),
+}
+DEFAULT_FROM_EMAIL = "Clama <oracao@clama.com.br>"
+
+# Admin alert email for ERRO notifications
+ADMIN_ALERT_EMAIL = env("ADMIN_ALERT_EMAIL", default="pedro@clama.com.br")

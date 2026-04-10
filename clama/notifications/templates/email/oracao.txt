@@ -1,0 +1,18 @@
+CLAMA.
+
+Querida {{ primeiro_nome }},
+
+{{ oracao }}
+
+---
+
+"Perto está o Senhor dos que têm o coração quebrantado
+e salva os de espírito oprimido."
+— Salmo 34:18
+
+---
+
+clama.com.br
+
+Este email foi enviado com amor pelo Clama.
+Para contato: contato@clama.com.br

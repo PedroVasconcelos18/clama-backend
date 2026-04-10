@@ -1,8 +1,12 @@
 """
 Handlers customizados para exceções DRF.
 """
+
+from rest_framework.exceptions import Throttled
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
+
+from clama.core.pastoral_messages import MSG_RATE_LIMITED
 
 from .exceptions import ClamaBaseException
 
@@ -32,6 +36,20 @@ def pastoral_exception_handler(exc, context):
                 }
             },
             status=status,
+        )
+
+    # Rate limiting (429 Throttled)
+    if isinstance(exc, Throttled):
+        wait_seconds = int(exc.wait) if exc.wait else 60
+        return Response(
+            {
+                "error": {
+                    "code": "rate_limited",
+                    "message": f"Too many requests. Retry after {wait_seconds} seconds.",
+                    "pastoral_message": MSG_RATE_LIMITED,
+                }
+            },
+            status=429,
         )
 
     # Fallback para o handler padrão do DRF

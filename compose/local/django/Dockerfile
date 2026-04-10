@@ -10,7 +10,7 @@ RUN apt-get update \
 
 # Requirements are installed here to ensure they will be cached.
 COPY ./requirements /requirements
-RUN pip install --no-cache-dir -r /requirements/local.txt
+RUN pip install --no-cache-dir --default-timeout=300 --retries 10 -r /requirements/local.txt
 
 COPY ./compose/local/django/entrypoint /entrypoint
 RUN sed -i 's/\r$//g' /entrypoint

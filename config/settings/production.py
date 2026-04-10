@@ -57,9 +57,14 @@ INSTALLED_APPS = ["whitenoise.runserver_nostatic", *INSTALLED_APPS]  # noqa: F40
 
 MIDDLEWARE = [  # noqa: F405
     "django.middleware.security.SecurityMiddleware",
+    "clama.payments.middleware.AsaasWebhookAuthMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     *MIDDLEWARE[1:],
 ]
+
+# ASAAS WEBHOOK
+# ------------------------------------------------------------------------------
+ASAAS_WEBHOOK_SECRET = env("ASAAS_WEBHOOK_SECRET")
 
 # STORAGES
 # ------------------------------------------------------------------------------
@@ -75,17 +80,19 @@ STORAGES = {
 
 # EMAIL
 # ------------------------------------------------------------------------------
+# https://anymail.dev/en/stable/esps/resend/
+EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
 # https://docs.djangoproject.com/en/dev/ref/settings/#default-from-email
 DEFAULT_FROM_EMAIL = env(
     "DJANGO_DEFAULT_FROM_EMAIL",
-    default="clama_backend <noreply@clama.com.br>",
+    default="Clama <oracao@clama.com.br>",
 )
 # https://docs.djangoproject.com/en/dev/ref/settings/#server-email
 SERVER_EMAIL = env("DJANGO_SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 # https://docs.djangoproject.com/en/dev/ref/settings/#email-subject-prefix
 EMAIL_SUBJECT_PREFIX = env(
     "DJANGO_EMAIL_SUBJECT_PREFIX",
-    default="[clama_backend]",
+    default="[Clama]",
 )
 
 # ADMIN

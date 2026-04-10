@@ -2,6 +2,11 @@
 
 Backend do Clama - Plataforma de oração pastoral personalizada.
 
+## URLs
+
+- **Produção:** `https://clama-backend.up.railway.app` (atualizar após configurar Railway)
+- **Local:** `http://localhost:8000`
+
 ## Stack
 
 - Django 4.2
@@ -165,3 +170,37 @@ Logar apenas:
 - Status
 - Timestamps
 - Códigos de erro
+
+## Deploy (Railway)
+
+### Serviços Railway
+
+| Serviço | Tipo | Comando |
+|---|---|---|
+| `web` | Dockerfile | `gunicorn config.wsgi --bind 0.0.0.0:$PORT` |
+| `worker` | Dockerfile | `celery -A config.celery_app worker -l INFO` |
+| `postgres` | Managed addon | - |
+| `redis` | Managed addon | - |
+
+### Variáveis de Ambiente (Produção)
+
+```
+DJANGO_SETTINGS_MODULE=config.settings.production
+DJANGO_SECRET_KEY=<secreto>
+DJANGO_ALLOWED_HOSTS=*.up.railway.app,clama.com.br
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+REDIS_URL=${{Redis.REDIS_URL}}
+CELERY_BROKER_URL=${{Redis.REDIS_URL}}
+DJANGO_CORS_ALLOWED_ORIGINS=https://clama.vercel.app,https://clama.com.br
+SENTRY_DSN=<do dashboard>
+SENTRY_ENVIRONMENT=production
+ANTHROPIC_API_KEY=<quando disponível>
+ASAAS_API_KEY=<quando disponível>
+RESEND_API_KEY=<quando disponível>
+```
+
+### Forçar Redeploy
+
+```bash
+git commit --allow-empty -m "trigger deploy" && git push
+```

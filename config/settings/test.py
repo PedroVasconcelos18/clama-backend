@@ -30,3 +30,8 @@ TEMPLATES[0]["OPTIONS"]["debug"] = True  # type: ignore[index] # noqa: F405
 
 # Your stuff...
 # ------------------------------------------------------------------------------
+
+# THROTTLING
+# ------------------------------------------------------------------------------
+# Desabilita throttling em testes para não atrapalhar a suíte
+REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []  # type: ignore[name-defined] # noqa: F405
