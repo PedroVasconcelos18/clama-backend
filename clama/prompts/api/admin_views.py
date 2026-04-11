@@ -175,7 +175,8 @@ Recebe dados de exemplo e retorna a oração que seria gerada.
 
             # Gera oração
             client = AnthropicClient()
-            oracao = client._generate_raw(system_prompt, user_message)
+            nome = pedido_exemplo.get("nome", "Maria")
+            oracao = client._generate_raw(system_prompt, user_message, nome=nome)
 
             return Response({
                 "oracao_preview": oracao,

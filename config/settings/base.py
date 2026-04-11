@@ -7,6 +7,7 @@ https://docs.djangoproject.com/en/5.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
+import os
 from pathlib import Path
 
 import environ
@@ -360,7 +361,8 @@ FIELD_ENCRYPTION_KEY = env(
 # Asaas Payment Gateway
 # -------------------------------------------------------------------------------
 # https://docs.asaas.com/reference
-ASAAS_API_KEY = env("ASAAS_API_KEY", default="")
+# Note: Using os.environ.get directly because django-environ interprets $ as variable reference
+ASAAS_API_KEY = os.environ.get("ASAAS_API_KEY", "")
 ASAAS_BASE_URL = env(
     "ASAAS_BASE_URL",
     default="https://sandbox.asaas.com/api/v3",

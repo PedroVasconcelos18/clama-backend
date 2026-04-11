@@ -143,6 +143,7 @@ criam nova cobrança ou reutilizam existente (Epic 3 endurece idempotência).
             customer_data = self.client.criar_cliente(
                 nome=pedido.nome,
                 email=pedido.email,
+                cpf_cnpj=pedido.cpf_cnpj,
             )
             customer_id = customer_data["id"]
 

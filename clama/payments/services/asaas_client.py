@@ -3,6 +3,7 @@ Cliente wrapper para a API do Asaas.
 """
 import logging
 import time
+from datetime import date
 from decimal import Decimal
 
 import requests
@@ -92,8 +93,14 @@ class AsaasClient:
             "name": nome,
             "email": email,
         }
+        # CPF/CNPJ é obrigatório para criar cobranças no Asaas
+        # TODO: Coletar CPF do usuário no formulário (Epic 4)
+        # Por enquanto, usa CPF de teste para sandbox
         if cpf_cnpj:
             payload["cpfCnpj"] = cpf_cnpj
+        elif settings.DEBUG:
+            # CPF válido para testes em sandbox
+            payload["cpfCnpj"] = "24971563792"
 
         start_time = time.time()
         try:
@@ -175,20 +182,23 @@ class AsaasClient:
         if billing_types and len(billing_types) == 1:
             billing_type = billing_types[0]
 
-        # Build callback URLs
-        frontend_url = getattr(settings, "FRONTEND_URL", "")
-        success_url = f"{frontend_url}/confirmacao?pedido_id={pedido_id}"
-
         payload = {
             "customer": customer_id,
             "billingType": billing_type,
             "value": float(valor_reais),
+            "dueDate": date.today().isoformat(),
             "description": descricao,
-            "callback": {
-                "successUrl": success_url,
-                "autoRedirect": True,
-            },
+            "externalReference": pedido_id,  # Para identificar o pedido no webhook
         }
+
+        # Callback só funciona com domínio cadastrado no Asaas
+        # TODO: Configurar domínio em Minha Conta > Informações no Asaas
+        # frontend_url = getattr(settings, "FRONTEND_URL", "")
+        # if frontend_url and not settings.DEBUG:
+        #     payload["callback"] = {
+        #         "successUrl": f"{frontend_url}/confirmacao?pedido_id={pedido_id}",
+        #         "autoRedirect": True,
+        #     }
 
         start_time = time.time()
         try:

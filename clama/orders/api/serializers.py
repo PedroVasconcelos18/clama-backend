@@ -24,6 +24,7 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
             "nome",
             "email",
             "telefone",
+            "cpf_cnpj",
             "idade",
             "sexo",
             "pedido_oracao",
@@ -52,6 +53,12 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
                     "invalid": "Confira seu e-mail — parece que faltou algo.",
                 },
             },
+            "cpf_cnpj": {
+                "required": True,
+                "error_messages": {
+                    "blank": "Por favor, digite seu CPF ou CNPJ.",
+                },
+            },
             "valor_centavos": {
                 "min_value": 2000,
                 "error_messages": {
@@ -72,6 +79,24 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
                 "Esse plano não está disponível no momento."
             )
         return value
+
+    def validate_cpf_cnpj(self, value):
+        """Valida formato do CPF (11 dígitos) ou CNPJ (14 dígitos)."""
+        # Remove caracteres não numéricos
+        digits = "".join(c for c in value if c.isdigit())
+
+        if len(digits) == 11:
+            # CPF
+            return digits
+        elif len(digits) == 14:
+            # CNPJ
+            return digits
+        else:
+            raise serializers.ValidationError(
+                "CPF deve ter 11 dígitos ou CNPJ deve ter 14 dígitos."
+            )
+
+        return digits
 
     def validate_consent_aceito(self, value):
         """Valida que o consentimento foi aceito."""

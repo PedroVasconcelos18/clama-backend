@@ -78,6 +78,89 @@ docker-compose -f docker-compose.local.yml down
 docker-compose -f docker-compose.local.yml run --rm django python manage.py makemigrations
 ```
 
+## Containers Docker
+
+O projeto usa 6 containers para desenvolvimento local:
+
+### django
+**Servidor web principal** - Executa a API Django REST Framework.
+- Porta: `8000`
+- Processa requests HTTP (criação de pedidos, checkout, webhooks)
+- Comando: `python manage.py runserver`
+
+### postgres
+**Banco de dados relacional** - Armazena todos os dados persistentes.
+- Pedidos, planos, usuários, prompts, eventos de webhook
+- Campos sensíveis (nome, email, telefone, oração) são criptografados
+- Volume persistente para não perder dados ao reiniciar
+
+### redis
+**Broker de mensagens** - Fila para comunicação entre Django e Celery.
+- Quando uma task é disparada, ela vai para uma fila no Redis
+- Workers leem dessa fila e executam as tasks
+- Também usado como cache
+
+### celeryworker
+**Executor de tasks em background** - Processa tarefas assíncronas.
+- `gerar_oracao_task` - Chama API do Claude para gerar oração
+- `enviar_oracao_task` - Envia email ou WhatsApp com a oração
+- `enviar_alerta_admin_task` - Notifica admin em caso de erro
+- **Essencial**: Sem ele, as tasks ficam na fila mas nunca executam
+
+### celerybeat
+**Agendador de tasks periódicas** - Dispara tasks em horários programados (tipo cron).
+- Reprocessamento de pedidos com erro
+- Limpeza de dados antigos
+- Relatórios periódicos
+
+### flower
+**Dashboard de monitoramento do Celery** - Interface web para debug.
+- Porta: `5555`
+- Login: `admin` / `admin`
+- Mostra tasks em execução, concluídas e com erro
+- Histórico e tempo de execução
+- **Opcional** em produção
+
+### Fluxo de uma Task
+
+```
+┌─────────────┐     ┌─────────┐     ┌────────────────┐
+│   Django    │────▶│  Redis  │◀────│ Celery Worker  │
+│  (Backend)  │     │ (Fila)  │     │ (Executa tasks)│
+└─────────────┘     └─────────┘     └────────────────┘
+                         ▲
+                         │
+                    ┌────┴─────┐
+                    │  Beat    │  (Dispara tasks agendadas)
+                    └──────────┘
+
+                    ┌──────────┐
+                    │  Flower  │  (Monitora tudo)
+                    └──────────┘
+```
+
+### Comandos Úteis para Containers
+
+```bash
+# Ver status de todos os containers
+docker ps
+
+# Ver logs de um container específico
+docker compose -f docker-compose.local.yml logs celeryworker --tail=50
+
+# Reiniciar um container específico
+docker compose -f docker-compose.local.yml restart celeryworker
+
+# Parar e remover todos os containers
+docker compose -f docker-compose.local.yml down
+
+# Subir todos os containers
+docker compose -f docker-compose.local.yml up -d
+
+# Forçar rebuild das imagens
+docker compose -f docker-compose.local.yml up -d --build
+```
+
 ## Estrutura do Projeto
 
 ```

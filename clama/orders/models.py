@@ -1,7 +1,7 @@
 """
 Modelos do app orders - Pedidos de oração.
 
-Campos sensíveis (nome, email, telefone, pedido_oracao, oracao_gerada) são
+Campos sensíveis (nome, email, telefone, cpf_cnpj, pedido_oracao, oracao_gerada) são
 criptografados em coluna via django-encrypted-model-fields para conformidade LGPD.
 """
 
@@ -61,6 +61,12 @@ class Pedido(UUIDPKModel, TimestampedModel):
         blank=True,
         default="",
         verbose_name="Telefone",
+    )
+    cpf_cnpj = EncryptedCharField(
+        max_length=18,
+        blank=True,
+        default="",
+        verbose_name="CPF/CNPJ",
     )
 
     # Dados opcionais

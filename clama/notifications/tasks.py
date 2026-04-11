@@ -5,7 +5,8 @@ Celery tasks para envio de notificações.
 import logging
 
 import sentry_sdk
-from celery import MaxRetriesExceededError, shared_task
+from celery import shared_task
+from celery.exceptions import MaxRetriesExceededError
 from django.conf import settings
 from django.core.mail import send_mail
 

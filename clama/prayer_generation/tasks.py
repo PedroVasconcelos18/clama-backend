@@ -10,7 +10,8 @@ import logging
 
 import anthropic
 import sentry_sdk
-from celery import MaxRetriesExceededError, shared_task
+from celery import shared_task
+from celery.exceptions import MaxRetriesExceededError
 
 from clama.orders.models import Pedido, PedidoStatus
 from clama.prayer_generation.exceptions import PrayerGenerationError

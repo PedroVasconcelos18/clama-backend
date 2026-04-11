@@ -21,6 +21,23 @@ MODEL_NAME = "claude-sonnet-4-20250514"
 MAX_TOKENS = 1500
 REQUEST_TIMEOUT = 30.0
 
+# API keys que indicam modo mock (sem créditos ou não configurado)
+MOCK_API_KEYS = {"", "test_api_key_for_local_development"}
+
+# Oração mock para desenvolvimento/testes
+MOCK_PRAYER_TEMPLATE = """Senhor, venho diante de Ti em nome de {nome}.
+
+Tu conheces cada detalhe da vida dela, cada angústia e cada esperança que habita seu coração. Neste momento, ela clama por Tua intervenção, e eu sei que Tu ouves.
+
+Pai, derrama Tua paz sobre {nome}. Que ela sinta Tua presença de forma real e tangível. Onde há medo, coloca coragem. Onde há dúvida, firma a fé. Onde há dor, traz o bálsamo do Teu amor.
+
+Guia seus passos, ilumina seu caminho e dá-lhe sabedoria para cada decisão. Que ela encontre descanso em Ti, sabendo que Tu és fiel para cumprir Tuas promessas.
+
+Em nome de Jesus, amém.
+
+---
+[MODO DESENVOLVIMENTO: Esta é uma oração de exemplo. Configure ANTHROPIC_API_KEY com créditos para gerar orações personalizadas via IA.]"""
+
 
 class AnthropicClient:
     """
@@ -28,13 +45,30 @@ class AnthropicClient:
 
     Implementa retry automático para erros de rede e overload (529).
     Todos os métodos logam eventos estruturados sem PII.
+
+    Em modo mock (sem API key válida), retorna oração de exemplo para
+    permitir testes do fluxo completo sem créditos na Anthropic.
     """
 
     def __init__(self):
         """
         Inicializa o cliente com credenciais do settings.
         """
-        self.client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        api_key = settings.ANTHROPIC_API_KEY or ""
+        self.mock_mode = api_key in MOCK_API_KEYS
+
+        if self.mock_mode:
+            logger.info(
+                "AnthropicClient em modo mock",
+                extra={"event": "anthropic_mock_mode", "reason": "no_valid_api_key"},
+            )
+            self.client = None
+        else:
+            self.client = anthropic.Anthropic(api_key=api_key)
+
+    def _get_mock_prayer(self, nome: str) -> str:
+        """Retorna oração mock para desenvolvimento."""
+        return MOCK_PRAYER_TEMPLATE.format(nome=nome)
 
     def _log_request(
         self,
@@ -85,6 +119,15 @@ class AnthropicClient:
         Raises:
             PrayerGenerationError: Se a geração falhar após retries
         """
+        # Modo mock: retorna oração de exemplo
+        if self.mock_mode:
+            primeiro_nome = pedido.nome.split()[0] if pedido.nome else "irmã"
+            logger.info(
+                "Retornando oração mock",
+                extra={"event": "anthropic_mock_prayer", "pedido_id": str(pedido.id)},
+            )
+            return self._get_mock_prayer(primeiro_nome)
+
         # Busca template ativo
         template = PromptTemplate.objects.get_active()
 
@@ -138,6 +181,16 @@ class AnthropicClient:
             )
             if e.status_code == 529:
                 raise  # Será retentado pelo decorator (overload)
+
+            # Fallback para erro de créditos insuficientes
+            if e.status_code == 400 and "credit balance" in str(e.message).lower():
+                primeiro_nome = pedido.nome.split()[0] if pedido.nome else "irmã"
+                logger.warning(
+                    "Anthropic sem créditos, usando mock",
+                    extra={"event": "anthropic_no_credits", "pedido_id": str(pedido.id)},
+                )
+                return self._get_mock_prayer(primeiro_nome)
+
             raise PrayerGenerationError(
                 message=f"Erro ao gerar oração: {e.message}"
             ) from e
@@ -155,13 +208,14 @@ class AnthropicClient:
                 message=f"Erro inesperado ao gerar oração: {e}"
             ) from e
 
-    def _generate_raw(self, system_prompt: str, user_message: str) -> str:
+    def _generate_raw(self, system_prompt: str, user_message: str, nome: str = "irmã") -> str:
         """
         Gera texto usando Claude diretamente (para preview admin).
 
         Args:
             system_prompt: System prompt completo
             user_message: User message completo
+            nome: Nome para personalizar oração mock (default: "irmã")
 
         Returns:
             Texto gerado
@@ -169,6 +223,14 @@ class AnthropicClient:
         Raises:
             PrayerGenerationError: Se a geração falhar
         """
+        # Modo mock: retorna oração de exemplo
+        if self.mock_mode:
+            logger.info(
+                "Retornando preview mock",
+                extra={"event": "anthropic_mock_preview"},
+            )
+            return self._get_mock_prayer(nome)
+
         start_time = time.time()
         try:
             response = self.client.messages.create(
@@ -194,6 +256,29 @@ class AnthropicClient:
             )
 
             return text
+
+        except anthropic.APIStatusError as e:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.warning(
+                "Anthropic preview request failed",
+                extra={
+                    "event": "anthropic_preview",
+                    "model": MODEL_NAME,
+                    "duration_ms": round(duration_ms, 2),
+                    "error": str(e),
+                },
+            )
+            # Fallback para erro de créditos insuficientes
+            if e.status_code == 400 and "credit balance" in str(e.message).lower():
+                logger.warning(
+                    "Anthropic sem créditos, usando mock para preview",
+                    extra={"event": "anthropic_no_credits_preview"},
+                )
+                return self._get_mock_prayer(nome)
+
+            raise PrayerGenerationError(
+                message=f"Erro ao gerar preview: {e}"
+            ) from e
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000

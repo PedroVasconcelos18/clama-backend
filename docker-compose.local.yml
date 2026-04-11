@@ -1,5 +1,3 @@
-version: "3.9"
-
 volumes:
   clama_backend_local_postgres_data: {}
   clama_backend_local_redis_data: {}
