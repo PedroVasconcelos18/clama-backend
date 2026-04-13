@@ -56,10 +56,11 @@ SECURE_CONTENT_TYPE_NOSNIFF = env.bool(
 INSTALLED_APPS = ["whitenoise.runserver_nostatic", *INSTALLED_APPS]  # noqa: F405
 
 MIDDLEWARE = [  # noqa: F405
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "clama.payments.middleware.AsaasWebhookAuthMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    *MIDDLEWARE[1:],
+    *MIDDLEWARE[2:],  # Skip CorsMiddleware and SecurityMiddleware (already added above)
 ]
 
 # ASAAS WEBHOOK
