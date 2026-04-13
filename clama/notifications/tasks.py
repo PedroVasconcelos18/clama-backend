@@ -201,7 +201,7 @@ def enviar_alerta_admin_task(pedido_id: str) -> None:
         )
         return
 
-    admin_email = getattr(settings, "ADMIN_ALERT_EMAIL", "pedro@clama.com.br")
+    admin_email = getattr(settings, "ADMIN_ALERT_EMAIL", "pedro@clama.me")
 
     # Monta email
     subject = f"[Clama] Pedido em ERRO - {str(pedido.id)[:8]}"
