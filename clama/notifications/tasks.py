@@ -25,7 +25,7 @@ WHATSAPP_MESSAGE_TEMPLATE = """🙏 *{nome}*, sua oração está aqui.
 
 ---
 _Enviado com carinho pelo Clama_
-_clama.com.br_"""
+_clama.me_"""
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)

@@ -40,7 +40,7 @@ def enviar_email_oracao(pedido: Pedido) -> None:
         body=body_text,
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[pedido.email],
-        reply_to=["contato@clama.com.br"],
+        reply_to=["contato@clama.me"],
     )
     email.attach_alternative(body_html, "text/html")
 

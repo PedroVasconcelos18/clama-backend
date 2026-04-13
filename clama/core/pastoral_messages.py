@@ -167,7 +167,7 @@ MSG_ORACAO_ENVIADA_WHATSAPP = (
 # Mensagem de erro definitivo na confirmação
 MSG_ERRO_DEFINITIVO = (
     "Tivemos um soluço — vamos reenviar logo. "
-    "Se demorar, escreva pra contato@clama.com.br."
+    "Se demorar, escreva pra contato@clama.me."
 )
 
 

@@ -390,7 +390,7 @@ ZAPI_BASE_URL = env("ZAPI_BASE_URL", default="https://api.z-api.io")
 ANYMAIL = {
     "RESEND_API_KEY": env("RESEND_API_KEY", default=""),
 }
-DEFAULT_FROM_EMAIL = "Clama <oracao@clama.com.br>"
+DEFAULT_FROM_EMAIL = "Clama <oracao@clama.me>"
 
 # Admin alert email for ERRO notifications
-ADMIN_ALERT_EMAIL = env("ADMIN_ALERT_EMAIL", default="pedro@clama.com.br")
+ADMIN_ALERT_EMAIL = env("ADMIN_ALERT_EMAIL", default="pedro@clama.me")
