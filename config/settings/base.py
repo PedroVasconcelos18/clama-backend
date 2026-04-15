@@ -393,4 +393,4 @@ ANYMAIL = {
 DEFAULT_FROM_EMAIL = "Clama <oracao@clama.me>"
 
 # Admin alert email for ERRO notifications
-ADMIN_ALERT_EMAIL = env("ADMIN_ALERT_EMAIL", default="pedro@clama.me")
+ADMIN_ALERT_EMAIL = env("ADMIN_ALERT_EMAIL", default="contato@clama.me")

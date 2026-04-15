@@ -13,7 +13,7 @@ class Command(BaseCommand):
     Cria um usuário admin do Clama.
 
     Uso:
-        python manage.py create_clama_admin --email admin@clama.com.br --password senhasegura
+        python manage.py create_clama_admin --email contato@clama.me --password senhasegura
 
     O usuário será criado com:
     - is_clama_admin = True

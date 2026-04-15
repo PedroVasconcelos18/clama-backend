@@ -8,7 +8,7 @@ import sentry_sdk
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage
 
 from clama.notifications.services.email_sender import enviar_email_oracao
 from clama.notifications.services.zapi_sender import ZapiSender
@@ -201,7 +201,7 @@ def enviar_alerta_admin_task(pedido_id: str) -> None:
         )
         return
 
-    admin_email = getattr(settings, "ADMIN_ALERT_EMAIL", "pedro@clama.me")
+    admin_email = getattr(settings, "ADMIN_ALERT_EMAIL", "contato@clama.me")
 
     # Monta email
     subject = f"[Clama] Pedido em ERRO - {str(pedido.id)[:8]}"
@@ -224,13 +224,13 @@ Acesse o admin para mais detalhes: {settings.FRONTEND_URL}/admin/pedidos/{pedido
 """
 
     try:
-        send_mail(
+        EmailMessage(
             subject=subject,
-            message=message,
+            body=message,
             from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[admin_email],
-            fail_silently=False,
-        )
+            to=[admin_email],
+            reply_to=["contato@clama.me"],
+        ).send(fail_silently=False)
 
         logger.info(
             "alerta_admin_enviado",

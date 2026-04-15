@@ -39,8 +39,7 @@ CACHES = {
 # Use Resend if API key is configured, otherwise console backend
 if env("RESEND_API_KEY", default=""):
     EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
-    # Usa domínio de teste do Resend (não requer verificação)
-    DEFAULT_FROM_EMAIL = "Clama <onboarding@resend.dev>"
+    DEFAULT_FROM_EMAIL = "Clama <oracao@clama.me>"
 else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
