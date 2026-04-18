@@ -20,15 +20,15 @@ class TestPlanModel:
         assert plan.ativo is True
 
     def test_valor_minimo_validation(self):
-        """Valor mínimo deve ser R$ 20,00 (2000 centavos)."""
-        plan = PlanFactory.build(valor_centavos=1999)
+        """Valor mínimo deve ser R$ 0,01 (1 centavo)."""
+        plan = PlanFactory.build(valor_centavos=0)
         with pytest.raises(ValidationError) as exc_info:
             plan.full_clean()
         assert "valor_centavos" in str(exc_info.value)
 
     def test_valor_minimo_aceito(self):
-        """Valor de exatamente R$ 20,00 deve ser aceito."""
-        plan = PlanFactory.build(valor_centavos=2000)
+        """Valor de exatamente R$ 0,01 deve ser aceito."""
+        plan = PlanFactory.build(valor_centavos=1)
         plan.full_clean()  # Não deve lançar exceção
 
     def test_valor_reais_str_property(self):

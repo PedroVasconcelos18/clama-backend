@@ -6,6 +6,7 @@ from rest_framework import serializers
 
 from clama.orders.models import Pedido
 from clama.payments.models import WebhookEvento
+from clama.plans.models import Plan
 
 
 class WebhookEventoSerializer(serializers.ModelSerializer):
@@ -22,6 +23,16 @@ class WebhookEventoSerializer(serializers.ModelSerializer):
             "error_message",
             "created_at",
         ]
+
+
+class PlanoNestedSerializer(serializers.ModelSerializer):
+    """Serializer nested para plano em detalhes do pedido."""
+
+    valor_reais_str = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = Plan
+        fields = ["id", "nome", "valor_reais_str"]
 
 
 class AdminPedidoListSerializer(serializers.ModelSerializer):
@@ -58,8 +69,7 @@ class AdminPedidoDetailSerializer(serializers.ModelSerializer):
     Acesso restrito a is_clama_admin=True.
     """
 
-    plano_nome = serializers.CharField(source="plano.nome", read_only=True)
-    plano_complexidade = serializers.CharField(source="plano.complexidade", read_only=True)
+    plano = PlanoNestedSerializer(read_only=True)
     valor_reais_str = serializers.CharField(read_only=True)
     webhook_events = WebhookEventoSerializer(many=True, read_only=True)
 
@@ -80,8 +90,6 @@ class AdminPedidoDetailSerializer(serializers.ModelSerializer):
             "oracao_gerada",
             # Plano e valor
             "plano",
-            "plano_nome",
-            "plano_complexidade",
             "valor_centavos",
             "valor_reais_str",
             # Status e canal

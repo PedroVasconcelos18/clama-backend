@@ -17,7 +17,7 @@ class AdminPlanSerializer(serializers.ModelSerializer):
     Serializer para CRUD de planos no admin.
 
     Validações:
-    - valor_centavos >= 2000 (R$ 20,00)
+    - valor_centavos >= 1 (R$ 0,01)
     - complexidade deve ser um valor válido
     - nome deve ser único entre planos ativos
 
@@ -44,8 +44,8 @@ class AdminPlanSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at", "valor_reais_str"]
 
     def validate_valor_centavos(self, value):
-        if value < 2000:
-            raise serializers.ValidationError("Valor mínimo é R$ 20,00 (2000 centavos)")
+        if value < 1:
+            raise serializers.ValidationError("Valor mínimo é R$ 0,01 (1 centavo)")
         return value
 
     def validate_complexidade(self, value):

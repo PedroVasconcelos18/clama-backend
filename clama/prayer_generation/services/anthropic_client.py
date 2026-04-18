@@ -1,5 +1,7 @@
 """
 Cliente wrapper para a API Anthropic (Claude).
+
+Suporta inclusão de documentos de contexto via Files API.
 """
 
 import logging
@@ -20,6 +22,9 @@ logger = logging.getLogger("clama.prayer_generation.anthropic_client")
 MODEL_NAME = "claude-sonnet-4-20250514"
 MAX_TOKENS = 1500
 REQUEST_TIMEOUT = 30.0
+
+# Beta header para Files API
+FILES_API_BETA_HEADER = "files-api-2025-04-14"
 
 # API keys que indicam modo mock (sem créditos ou não configurado)
 MOCK_API_KEYS = {"", "test_api_key_for_local_development"}
@@ -65,6 +70,40 @@ class AnthropicClient:
             self.client = None
         else:
             self.client = anthropic.Anthropic(api_key=api_key)
+
+    def _get_documentos_contexto(self) -> list[dict]:
+        """
+        Retorna lista de document blocks para documentos ativos e sincronizados.
+
+        Returns:
+            Lista de dicts no formato esperado pela API (document blocks com file_id)
+        """
+        from clama.documents.models import DocumentoContexto
+
+        documentos = DocumentoContexto.objects.ativos_sincronizados()
+        blocks = []
+
+        for doc in documentos:
+            blocks.append({
+                "type": "document",
+                "source": {
+                    "type": "file",
+                    "file_id": doc.anthropic_file_id,
+                },
+                "cache_control": {"type": "ephemeral"},
+            })
+
+        if blocks:
+            logger.info(
+                "Documentos de contexto incluídos",
+                extra={
+                    "event": "documentos_contexto_incluidos",
+                    "count": len(blocks),
+                    "file_ids": [doc.anthropic_file_id for doc in documentos],
+                },
+            )
+
+        return blocks
 
     def _get_mock_prayer(self, nome: str) -> str:
         """Retorna oração mock para desenvolvimento."""
@@ -134,14 +173,30 @@ class AnthropicClient:
         # Monta prompt
         system_prompt, user_message = build_prompt(pedido, template)
 
+        # Busca documentos de contexto ativos e sincronizados
+        documentos_blocks = self._get_documentos_contexto()
+
+        # Monta conteúdo da mensagem do usuário
+        # Se há documentos de contexto, inclui como document blocks antes do texto
+        if documentos_blocks:
+            user_content = documentos_blocks + [{"type": "text", "text": user_message}]
+        else:
+            user_content = user_message
+
         start_time = time.time()
         try:
+            # Usa beta header se há documentos de contexto
+            extra_headers = {}
+            if documentos_blocks:
+                extra_headers["anthropic-beta"] = FILES_API_BETA_HEADER
+
             response = self.client.messages.create(
                 model=MODEL_NAME,
                 max_tokens=MAX_TOKENS,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_message}],
+                messages=[{"role": "user", "content": user_content}],
                 timeout=REQUEST_TIMEOUT,
+                extra_headers=extra_headers if extra_headers else None,
             )
             duration_ms = (time.time() - start_time) * 1000
 

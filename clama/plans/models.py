@@ -21,7 +21,7 @@ class Plan(UUIDPKModel, TimestampedModel):
 
     nome = models.CharField(max_length=80)
     valor_centavos = models.IntegerField(
-        validators=[MinValueValidator(2000, message="Valor mínimo é R$ 20,00")]
+        validators=[MinValueValidator(1, message="Valor mínimo é R$ 0,01")]
     )
     descricao = models.TextField()
     complexidade = models.CharField(
