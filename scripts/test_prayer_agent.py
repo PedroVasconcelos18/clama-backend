@@ -1,10 +1,16 @@
 """
-Data migration: Seed do template de prompt pastoral v1.
+Agente de teste para geração de orações via Claude Code.
 
-Este template define a identidade do Clama e o tom das orações geradas.
+Uso: Execute este script passando os parâmetros como JSON no stdin,
+ou importe a função build_test_prompt() para montar o prompt manualmente.
+
+Replica exatamente o comportamento do prompt_builder.py + seed do Clama.
 """
 
-from django.db import migrations
+import json
+import sys
+
+# --- Template Pastoral v2 ---
 
 SYSTEM_PROMPT = """# Identidade
 
@@ -72,32 +78,32 @@ Se o pedido contiver **qualquer sinal** das situações abaixo, você DEVE inclu
 ### A. Ideação suicida, autolesão, desejo de morrer
 Sinais: "quero morrer", "acabar com tudo", "sumir", "não aguento mais viver", "me machucar", "desistir da vida", menção a métodos.
 
-Bloco a incluir:
-{Nome}, quero te pedir uma coisa com todo o carinho do meu coração: procure ajuda agora. Ligue para o CVV — Centro de Valorização da Vida — 188 (ligação gratuita, 24h, sigilosa) ou acesse cvv.org.br para conversar por chat. Se estiver em risco imediato, ligue para o SAMU 192. Procurar ajuda profissional não é falta de fé — é um ato de cuidado com a vida que Deus te deu. Você não precisa atravessar isso sozinho(a).
+**Bloco a incluir:**
+> {Nome}, quero te pedir uma coisa com todo o carinho do meu coração: procure ajuda agora. Ligue para o **CVV — Centro de Valorização da Vida — 188** (ligação gratuita, 24h, sigilosa) ou acesse **cvv.org.br** para conversar por chat. Se estiver em risco imediato, ligue para o **SAMU 192**. Procurar ajuda profissional não é falta de fé — é um ato de cuidado com a vida que Deus te deu. Você não precisa atravessar isso sozinho(a).
 
 ### B. Depressão, ansiedade severa, sofrimento psíquico intenso
 Sinais: depressão diagnosticada ou descrita, ansiedade incapacitante, crises de pânico, esgotamento mental prolongado, insônia severa persistente.
 
-Bloco a incluir:
-{Nome}, esta dor que você carrega merece também o cuidado de quem é preparado para caminhar contigo de perto. Procure um psicólogo, psiquiatra ou o posto de saúde mais próximo — o CAPS (Centro de Atenção Psicossocial) do SUS atende gratuitamente. Se precisar de alguém para conversar agora, o CVV 188 está disponível 24h. Fé e cuidado profissional caminham juntos — um não exclui o outro.
+**Bloco a incluir:**
+> {Nome}, esta dor que você carrega merece também o cuidado de quem é preparado para caminhar contigo de perto. Procure um psicólogo, psiquiatra ou o posto de saúde mais próximo — o **CAPS (Centro de Atenção Psicossocial)** do SUS atende gratuitamente. Se precisar de alguém para conversar agora, o **CVV 188** está disponível 24h. Fé e cuidado profissional caminham juntos — um não exclui o outro.
 
 ### C. Violência doméstica, agressão, abuso
 Sinais: apanhar, ameaça, marido/companheiro(a) violento(a), agressão física ou sexual, filho(a) em risco, medo de sair de casa.
 
-Bloco a incluir:
-{Nome}, sua segurança importa profundamente. Se estiver em perigo agora, ligue para a Polícia Militar — 190. Para denúncias de violência contra a mulher, ligue 180 (Central de Atendimento à Mulher, 24h, sigiloso). Para violência contra crianças, idosos ou qualquer pessoa em situação de vulnerabilidade, ligue 100. Nenhuma forma de violência é vontade de Deus para você. Procurar proteção é um ato legítimo de fé.
+**Bloco a incluir:**
+> {Nome}, sua segurança importa profundamente. Se estiver em perigo agora, ligue para a **Polícia Militar — 190**. Para denúncias de violência contra a mulher, ligue **180** (Central de Atendimento à Mulher, 24h, sigiloso). Para violência contra crianças, idosos ou qualquer pessoa em situação de vulnerabilidade, ligue **100**. Nenhuma forma de violência é vontade de Deus para você. Procurar proteção é um ato legítimo de fé.
 
 ### D. Violência contra criança, idoso ou pessoa vulnerável (relatada por terceiro)
-Bloco a incluir:
-{Nome}, essa situação precisa ser levada a quem pode agir. Ligue para o Disque 100 (Disque Direitos Humanos, 24h, anônimo) ou procure o Conselho Tutelar mais próximo. Orar e agir caminham juntos.
+**Bloco a incluir:**
+> {Nome}, essa situação precisa ser levada a quem pode agir. Ligue para o **Disque 100** (Disque Direitos Humanos, 24h, anônimo) ou procure o Conselho Tutelar mais próximo. Orar e agir caminham juntos.
 
 ### E. Dependência química / álcool em crise
-Bloco a incluir:
-{Nome}, essa batalha não se vence sozinho(a). Procure um CAPS-AD (álcool e drogas) do SUS — atendimento gratuito — ou grupos como AA (Alcoólicos Anônimos) e NA (Narcóticos Anônimos), que têm reuniões abertas e acolhedoras em todo o Brasil. Buscar ajuda é parte do caminho de cura que Deus abre.
+**Bloco a incluir:**
+> {Nome}, essa batalha não se vence sozinho(a). Procure um CAPS-AD (álcool e drogas) do SUS — atendimento gratuito — ou grupos como **AA (Alcoólicos Anônimos)** e **NA (Narcóticos Anônimos)**, que têm reuniões abertas e acolhedoras em todo o Brasil. Buscar ajuda é parte do caminho de cura que Deus abre.
 
 ### F. Sintoma físico grave agudo (dor intensa, sangramento, desmaio, dificuldade respiratória)
-Bloco a incluir:
-{Nome}, procure atendimento médico agora — ligue para o SAMU 192 ou vá ao pronto-socorro mais próximo. Deus cuida também através das mãos dos profissionais de saúde.
+**Bloco a incluir:**
+> {Nome}, procure atendimento médico agora — ligue para o **SAMU 192** ou vá ao pronto-socorro mais próximo. Deus cuida também através das mãos dos profissionais de saúde.
 
 ## Regras do bloco de crise
 
@@ -133,6 +139,7 @@ Retorne **apenas o texto da oração**, sem preâmbulo ("Aqui está...", "Segue 
 
 Exemplo de estrutura COM_PROFECIA_E_VERSICULOS:
 
+```
 [Parágrafo 1 — acolhimento]
 
 [Parágrafo 2 — reconhecimento da dor/situação]
@@ -150,6 +157,7 @@ Palavra de encorajamento: "..."
 "..." — Livro Capítulo:Versículo (Tradução)
 "..." — Livro Capítulo:Versículo (Tradução)
 "..." — Livro Capítulo:Versículo (Tradução)
+```
 
 # Lembrete final
 
@@ -162,31 +170,130 @@ INSTRUCOES_POR_COMPLEXIDADE = {
 }
 
 
-def create_prompt_template(apps, schema_editor):
-    """Cria o template de prompt pastoral v1."""
-    PromptTemplate = apps.get_model("prompts", "PromptTemplate")
+def build_test_prompt(
+    nome: str,
+    sexo: str,
+    idade: str,
+    pedido_oracao: str,
+    complexidade: str,
+) -> tuple[str, str]:
+    """
+    Monta system_prompt + user_message idêntico ao prompt_builder.py.
+    """
+    instrucao = INSTRUCOES_POR_COMPLEXIDADE.get(complexidade, "")
 
-    PromptTemplate.objects.create(
-        nome="Clama Pastoral v1",
-        versao=1,
-        system_prompt=SYSTEM_PROMPT,
-        instrucoes_por_complexidade=INSTRUCOES_POR_COMPLEXIDADE,
-        ativo=True,
+    pedido_oracao = pedido_oracao.strip() if pedido_oracao else "[pedido vazio]"
+    sexo = sexo if sexo else "não informado"
+    idade = idade if idade else "não informada"
+
+    user_message = f"""{instrucao}
+
+Nome: {nome}
+Sexo: {sexo}
+Idade: {idade}
+
+Pedido: {pedido_oracao}"""
+
+    return SYSTEM_PROMPT, user_message
+
+
+# --- Exemplos de teste por complexidade ---
+
+EXEMPLOS = {
+    "simples": [
+        {
+            "nome": "Maria",
+            "sexo": "feminino",
+            "idade": "35",
+            "pedido_oracao": "Peço oração pela saúde da minha mãe que está internada.",
+            "complexidade": "simples",
+        },
+        {
+            "nome": "João",
+            "sexo": "masculino",
+            "idade": "28",
+            "pedido_oracao": "Estou passando por dificuldades financeiras e preciso de direção.",
+            "complexidade": "simples",
+        },
+        {
+            "nome": "Ana",
+            "sexo": "feminino",
+            "idade": "42",
+            "pedido_oracao": "Gratidão por uma conquista profissional que recebi hoje.",
+            "complexidade": "simples",
+        },
+    ],
+    "com_versiculo": [
+        {
+            "nome": "Carlos",
+            "sexo": "masculino",
+            "idade": "50",
+            "pedido_oracao": "Meu casamento está em crise e não sei o que fazer. Peço restauração.",
+            "complexidade": "com_versiculo",
+        },
+        {
+            "nome": "Rebeca",
+            "sexo": "feminino",
+            "idade": "19",
+            "pedido_oracao": "Vou prestar vestibular semana que vem e estou muito ansiosa.",
+            "complexidade": "com_versiculo",
+        },
+        {
+            "nome": "Pedro",
+            "sexo": "masculino",
+            "idade": "60",
+            "pedido_oracao": "Perdi meu irmão recentemente e estou em luto profundo.",
+            "complexidade": "com_versiculo",
+        },
+    ],
+    "com_profecia_e_versiculos": [
+        {
+            "nome": "Fernanda",
+            "sexo": "feminino",
+            "idade": "33",
+            "pedido_oracao": "Estou lutando contra depressão e ansiedade há meses. Preciso sentir a presença de Deus.",
+            "complexidade": "com_profecia_e_versiculos",
+        },
+        {
+            "nome": "Lucas",
+            "sexo": "masculino",
+            "idade": "45",
+            "pedido_oracao": "Fui diagnosticado com uma doença grave e preciso de um milagre.",
+            "complexidade": "com_profecia_e_versiculos",
+        },
+        {
+            "nome": "Marta",
+            "sexo": "feminino",
+            "idade": "55",
+            "pedido_oracao": "Meu filho se afastou da fé e da família. Peço que Deus toque o coração dele.",
+            "complexidade": "com_profecia_e_versiculos",
+        },
+    ],
+}
+
+
+if __name__ == "__main__":
+    # Uso: echo '{"nome":"Maria",...}' | python test_prayer_agent.py
+    # Ou: python test_prayer_agent.py --list  (mostra exemplos)
+    if len(sys.argv) > 1 and sys.argv[1] == "--list":
+        print(json.dumps(EXEMPLOS, indent=2, ensure_ascii=False))
+        sys.exit(0)
+
+    data = json.loads(sys.stdin.read())
+    system_prompt, user_message = build_test_prompt(
+        nome=data["nome"],
+        sexo=data["sexo"],
+        idade=data.get("idade", ""),
+        pedido_oracao=data["pedido_oracao"],
+        complexidade=data["complexidade"],
     )
 
-
-def remove_prompt_template(apps, schema_editor):
-    """Remove o template de prompt pastoral v1."""
-    PromptTemplate = apps.get_model("prompts", "PromptTemplate")
-    PromptTemplate.objects.filter(nome="Clama Pastoral v1", versao=1).delete()
-
-
-class Migration(migrations.Migration):
-
-    dependencies = [
-        ("prompts", "0001_initial"),
-    ]
-
-    operations = [
-        migrations.RunPython(create_prompt_template, remove_prompt_template),
-    ]
+    print("=" * 60)
+    print("SYSTEM PROMPT:")
+    print("=" * 60)
+    print(system_prompt)
+    print()
+    print("=" * 60)
+    print("USER MESSAGE:")
+    print("=" * 60)
+    print(user_message)
