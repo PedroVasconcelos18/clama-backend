@@ -161,8 +161,9 @@ Recebe dados de exemplo e retorna a oração que seria gerada.
         pedido_exemplo = serializer.validated_data["pedido_exemplo"]
 
         # Cria um pedido fake para o prompt builder
-        from clama.prayer_generation.services.prompt_builder import build_prompt_for_preview
+        from clama.prayer_generation.exceptions import InsufficientCreditsError
         from clama.prayer_generation.services.anthropic_client import AnthropicClient
+        from clama.prayer_generation.services.prompt_builder import build_prompt_for_preview
 
         try:
             system_prompt, user_message = build_prompt_for_preview(
@@ -187,6 +188,19 @@ Recebe dados de exemplo e retorna a oração que seria gerada.
                 },
             })
 
+        except InsufficientCreditsError:
+            return Response(
+                {
+                    "error": {
+                        "code": "anthropic_no_credits",
+                        "message": (
+                            "A API da Anthropic está sem créditos. "
+                            "Recarregue os créditos para gerar previews."
+                        ),
+                    }
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except Exception as exc:
             return Response(
                 {"error": {"message": str(exc)}},

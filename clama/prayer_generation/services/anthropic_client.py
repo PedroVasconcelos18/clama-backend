@@ -12,7 +12,10 @@ from django.conf import settings
 
 from clama.core.retry import with_retry
 from clama.orders.models import Pedido
-from clama.prayer_generation.exceptions import PrayerGenerationError
+from clama.prayer_generation.exceptions import (
+    InsufficientCreditsError,
+    PrayerGenerationError,
+)
 from clama.prayer_generation.services.prompt_builder import build_prompt
 from clama.prompts.models import PromptTemplate
 
@@ -237,14 +240,16 @@ class AnthropicClient:
             if e.status_code == 529:
                 raise  # Será retentado pelo decorator (overload)
 
-            # Fallback para erro de créditos insuficientes
+            # Créditos insuficientes: propaga como erro persistente
+            # (tratado em tasks.py sem reagendamento + mensagem pastoral 24h)
             if e.status_code == 400 and "credit balance" in str(e.message).lower():
-                primeiro_nome = pedido.nome.split()[0] if pedido.nome else "irmã"
                 logger.warning(
-                    "Anthropic sem créditos, usando mock",
+                    "Anthropic sem créditos",
                     extra={"event": "anthropic_no_credits", "pedido_id": str(pedido.id)},
                 )
-                return self._get_mock_prayer(primeiro_nome)
+                raise InsufficientCreditsError(
+                    message=f"Anthropic sem créditos: {e.message}"
+                ) from e
 
             raise PrayerGenerationError(
                 message=f"Erro ao gerar oração: {e.message}"
@@ -323,13 +328,15 @@ class AnthropicClient:
                     "error": str(e),
                 },
             )
-            # Fallback para erro de créditos insuficientes
+            # Créditos insuficientes: propaga como erro persistente
             if e.status_code == 400 and "credit balance" in str(e.message).lower():
                 logger.warning(
-                    "Anthropic sem créditos, usando mock para preview",
+                    "Anthropic sem créditos (preview)",
                     extra={"event": "anthropic_no_credits_preview"},
                 )
-                return self._get_mock_prayer(nome)
+                raise InsufficientCreditsError(
+                    message=f"Anthropic sem créditos: {e}"
+                ) from e
 
             raise PrayerGenerationError(
                 message=f"Erro ao gerar preview: {e}"

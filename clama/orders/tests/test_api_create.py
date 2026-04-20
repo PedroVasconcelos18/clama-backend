@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from clama.orders.models import CanalEntrega, Pedido, PedidoStatus
+from clama.plans.models import Complexidade, Plan
 from clama.plans.tests.factories import PlanFactory
 
 
@@ -183,6 +184,109 @@ class TestPedidoCreateValidation:
         response = api_client.post(url, valid_pedido_data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+class TestPedidoCreateValorLivre:
+    """Testes para criação via Valor Livre (sem plano explícito — backend infere)."""
+
+    @pytest.fixture
+    def tres_planos(self):
+        """Três planos ativos (SIMPLES R$20, COM_VERSICULO R$50, COM_PROFECIA R$100)."""
+        Plan.objects.all().delete()
+        simples = PlanFactory(
+            nome="Simples",
+            valor_centavos=2000,
+            complexidade=Complexidade.SIMPLES,
+            ordem=1,
+            ativo=True,
+        )
+        com_versiculo = PlanFactory(
+            nome="Com versículo",
+            valor_centavos=5000,
+            complexidade=Complexidade.COM_VERSICULO,
+            ordem=2,
+            ativo=True,
+        )
+        com_profecia = PlanFactory(
+            nome="Com profecia",
+            valor_centavos=10000,
+            complexidade=Complexidade.COM_PROFECIA_E_VERSICULOS,
+            ordem=3,
+            ativo=True,
+        )
+        return simples, com_versiculo, com_profecia
+
+    def _base_data(self):
+        return {
+            "nome": "Maria Silva",
+            "email": "maria@example.com",
+            "telefone": "(11) 99999-8888",
+            "idade": 35,
+            "sexo": "feminino",
+            "pedido_oracao": "Peço oração pela minha família.",
+            "canal_entrega": CanalEntrega.EMAIL,
+            "cpf_cnpj": "12345678909",
+            "consent_aceito": True,
+        }
+
+    def test_valor_livre_20_mapeia_simples(self, api_client, tres_planos):
+        """R$20 sem plano → SIMPLES."""
+        simples, _, _ = tres_planos
+        data = {**self._base_data(), "valor_centavos": 2000}
+        url = reverse("pedido-create")
+        response = api_client.post(url, data, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        pedido = Pedido.objects.get(id=response.data["id"])
+        assert pedido.plano == simples
+        assert pedido.plano.complexidade == Complexidade.SIMPLES
+        assert pedido.valor_centavos == 2000
+
+    def test_valor_livre_75_mapeia_com_versiculo(self, api_client, tres_planos):
+        """R$75 sem plano → COM_VERSICULO (par abaixo: R$50)."""
+        _, com_versiculo, _ = tres_planos
+        data = {**self._base_data(), "valor_centavos": 7500}
+        url = reverse("pedido-create")
+        response = api_client.post(url, data, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        pedido = Pedido.objects.get(id=response.data["id"])
+        assert pedido.plano == com_versiculo
+        assert pedido.plano.complexidade == Complexidade.COM_VERSICULO
+        assert pedido.valor_centavos == 7500
+
+    def test_valor_livre_150_mapeia_com_profecia(self, api_client, tres_planos):
+        """R$150 sem plano → COM_PROFECIA (par abaixo: R$100)."""
+        _, _, com_profecia = tres_planos
+        data = {**self._base_data(), "valor_centavos": 15000}
+        url = reverse("pedido-create")
+        response = api_client.post(url, data, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        pedido = Pedido.objects.get(id=response.data["id"])
+        assert pedido.plano == com_profecia
+        assert pedido.plano.complexidade == Complexidade.COM_PROFECIA_E_VERSICULOS
+        assert pedido.valor_centavos == 15000
+
+    def test_valor_livre_abaixo_minimo_retorna_400(self, api_client, tres_planos):
+        """Valor < R$20 deve ser rejeitado mesmo sem plano explícito."""
+        data = {**self._base_data(), "valor_centavos": 1500}
+        url = reverse("pedido-create")
+        response = api_client.post(url, data, format="json")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_valor_livre_com_plano_null_aceito(self, api_client, tres_planos):
+        """Enviar plano=null explicitamente também deve funcionar."""
+        simples, _, _ = tres_planos
+        data = {**self._base_data(), "valor_centavos": 2000, "plano": None}
+        url = reverse("pedido-create")
+        response = api_client.post(url, data, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        pedido = Pedido.objects.get(id=response.data["id"])
+        assert pedido.plano == simples
 
 
 @pytest.mark.django_db

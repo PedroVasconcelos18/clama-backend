@@ -187,8 +187,27 @@ class AdminPedidoReenviarView(AdminAPIView):
                 status_code=404,
             )
 
-        # Valida que tem oração gerada
+        # Pedido travado sem oração (ex.: créditos Anthropic zerados):
+        # relança a geração ao invés de só reenviar.
         if not pedido.oracao_gerada:
+            regerable_statuses = {PedidoStatus.ERRO, PedidoStatus.AGUARDANDO_REENVIO}
+            if pedido.status in regerable_statuses:
+                pedido.status = PedidoStatus.PAGO
+                pedido.retry_count = 0
+                pedido.last_error = ""
+                pedido.save(
+                    update_fields=["status", "retry_count", "last_error", "updated_at"]
+                )
+
+                from clama.prayer_generation.tasks import gerar_oracao_task
+
+                gerar_oracao_task.delay(str(pedido.id))
+
+                return Response(
+                    {"status": "ok", "message": "Regeração disparada"},
+                    status=status.HTTP_200_OK,
+                )
+
             raise PastoralAPIException(
                 code="no_prayer",
                 message="Pedido sem oração gerada",

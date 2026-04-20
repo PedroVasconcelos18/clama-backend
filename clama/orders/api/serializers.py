@@ -6,14 +6,19 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from clama.core.legal import POLITICA_VERSAO_ATUAL
-from clama.orders.models import CanalEntrega, Pedido
+from clama.core.pastoral_messages import MSG_ERRO_CREDITOS_24H
+from clama.orders.models import CanalEntrega, Pedido, PedidoStatus
 from clama.plans.models import Plan
 
 
 class PedidoCreateSerializer(serializers.ModelSerializer):
     """Serializer para criação de pedidos."""
 
-    plano = serializers.PrimaryKeyRelatedField(queryset=Plan.objects.all())
+    plano = serializers.PrimaryKeyRelatedField(
+        queryset=Plan.objects.all(),
+        required=False,
+        allow_null=True,
+    )
     valor_reais_str = serializers.CharField(read_only=True)
     consent_aceito = serializers.BooleanField(required=True, write_only=True)
 
@@ -74,6 +79,8 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
 
     def validate_plano(self, value):
         """Valida que o plano está ativo."""
+        if value is None:
+            return value
         if not value.ativo:
             raise serializers.ValidationError(
                 "Esse plano não está disponível no momento."
@@ -107,7 +114,7 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        """Validação cross-field: WhatsApp requer telefone."""
+        """Validação cross-field: WhatsApp requer telefone; deriva plano se omitido."""
         canal = data.get("canal_entrega")
         telefone = data.get("telefone", "")
 
@@ -115,6 +122,15 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"telefone": "Para receber no WhatsApp, precisamos do seu telefone."}
             )
+
+        # Valor Livre: deriva plano a partir do valor ("par abaixo").
+        if data.get("plano") is None:
+            inferido = Plan.objects.infer_from_valor(data["valor_centavos"])
+            if inferido is None:
+                raise serializers.ValidationError(
+                    {"plano": "Nenhum plano disponível no momento."}
+                )
+            data["plano"] = inferido
 
         return data
 
@@ -163,6 +179,7 @@ class PedidoStatusSerializer(serializers.ModelSerializer):
 
     plano = serializers.CharField(source="plano.nome", read_only=True)
     valor_reais_str = serializers.CharField(read_only=True)
+    pastoral_message = serializers.SerializerMethodField()
 
     class Meta:
         model = Pedido
@@ -173,4 +190,11 @@ class PedidoStatusSerializer(serializers.ModelSerializer):
             "valor_reais_str",
             "canal_entrega",
             "created_at",
+            "pastoral_message",
         ]
+
+    def get_pastoral_message(self, obj: Pedido) -> str | None:
+        """Mensagem pastoral contextual (ex.: 24h quando créditos esgotaram)."""
+        if obj.status == PedidoStatus.ERRO and obj.last_error == "credit_balance":
+            return MSG_ERRO_CREDITOS_24H
+        return None

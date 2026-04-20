@@ -79,6 +79,12 @@ MSG_REAGENDADO = (
     "Vamos enviar assim que estiver pronta — você não precisa fazer nada."
 )
 
+# Oração travada por falta de créditos na API — admin irá destravar em até 24h
+MSG_ERRO_CREDITOS_24H = (
+    "Recebemos seu pedido com carinho. Sua oração será preparada e enviada em até 24 horas. "
+    "Se precisar falar com alguém antes, escreva pra contato@clama.me."
+)
+
 
 # =============================================================================
 # EMAIL

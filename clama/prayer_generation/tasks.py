@@ -14,7 +14,10 @@ from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 
 from clama.orders.models import Pedido, PedidoStatus
-from clama.prayer_generation.exceptions import PrayerGenerationError
+from clama.prayer_generation.exceptions import (
+    InsufficientCreditsError,
+    PrayerGenerationError,
+)
 from clama.prayer_generation.services.anthropic_client import AnthropicClient
 
 logger = logging.getLogger("clama.prayer_generation.tasks")
@@ -85,6 +88,26 @@ def gerar_oracao_task(self, pedido_id: str) -> None:
         from clama.notifications.tasks import enviar_oracao_task
 
         enviar_oracao_task.delay(pedido_id)
+
+    except InsufficientCreditsError as exc:
+        # Falha persistente: créditos só voltam quando admin recarrega manualmente.
+        # Marca ERRO sem mock e sem reagendar — admin destravará via endpoint reenviar.
+        pedido.status = PedidoStatus.ERRO
+        pedido.last_error = "credit_balance"
+        pedido.save(update_fields=["status", "last_error", "updated_at"])
+
+        logger.error(
+            "gerar_oracao_sem_creditos",
+            extra={
+                "event": "gerar_oracao_no_credits",
+                "pedido_id": pedido_id,
+            },
+        )
+        sentry_sdk.capture_message(
+            "Anthropic sem créditos — pedido travado aguardando admin",
+            level="error",
+        )
+        return
 
     except (PrayerGenerationError, anthropic.APITimeoutError, anthropic.APIConnectionError) as exc:
         logger.warning(

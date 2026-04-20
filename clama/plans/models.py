@@ -14,6 +14,31 @@ class Complexidade(models.TextChoices):
     COM_PROFECIA_E_VERSICULOS = "com_profecia_e_versiculos", "Com profecia e versículos"
 
 
+class PlanManager(models.Manager):
+    """Manager customizado para Plan."""
+
+    def infer_from_valor(self, valor_centavos: int) -> "Plan | None":
+        """
+        Infere o plano ativo apropriado para um dado valor em centavos.
+
+        Regra "par abaixo": retorna o plano ativo de maior `valor_centavos`
+        cujo valor seja menor ou igual ao informado. Se nenhum plano ativo
+        bater (ex.: valor abaixo do menor plano — caso o serializer já valida
+        antes), retorna o menor plano ativo como fallback.
+
+        Returns:
+            Plan inferido ou None se não houver planos ativos.
+        """
+        abaixo = (
+            self.filter(ativo=True, valor_centavos__lte=valor_centavos)
+            .order_by("-valor_centavos")
+            .first()
+        )
+        if abaixo is not None:
+            return abaixo
+        return self.filter(ativo=True).order_by("valor_centavos").first()
+
+
 class Plan(UUIDPKModel, TimestampedModel):
     """
     Representa um plano de oferta do Clama.
@@ -31,6 +56,8 @@ class Plan(UUIDPKModel, TimestampedModel):
     )
     ordem = models.PositiveSmallIntegerField(default=1)
     ativo = models.BooleanField(default=True)
+
+    objects = PlanManager()
 
     class Meta:
         ordering = ("ordem",)
