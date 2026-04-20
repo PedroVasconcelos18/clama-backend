@@ -65,9 +65,9 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
                 },
             },
             "valor_centavos": {
-                "min_value": 2000,
+                "min_value": 199,
                 "error_messages": {
-                    "min_value": "O valor mínimo é R$20 — qualquer oferta acima ajuda o Clama.",
+                    "min_value": "O valor mínimo é R$ 1,99 — qualquer oferta acima ajuda o Clama.",
                 },
             },
             "canal_entrega": {
