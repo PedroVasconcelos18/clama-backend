@@ -28,6 +28,8 @@ services:
       - clama_backend_local_postgres_data:/var/lib/postgresql/data
     env_file:
       - ./.envs/.local/.postgres
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clama_backend}"]
       interval: 10s
