@@ -15,6 +15,7 @@ class PedidoFactory(DjangoModelFactory):
     nome = factory.Faker("name", locale="pt_BR")
     email = factory.Faker("email")
     telefone = factory.Faker("phone_number", locale="pt_BR")
+    cpf_cnpj = "24971563792"
     idade = factory.Faker("pyint", min_value=18, max_value=80)
     sexo = ""
     pedido_oracao = factory.Faker("paragraph", locale="pt_BR")

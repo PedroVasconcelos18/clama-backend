@@ -90,13 +90,14 @@ class TestCheckoutHappyPath:
     def test_checkout_creates_asaas_customer(
         self, api_client, pedido_aguardando, mock_asaas_client
     ):
-        """Checkout deve chamar criar_cliente com nome e email."""
+        """Checkout deve chamar criar_cliente com nome, email e cpf_cnpj."""
         url = reverse("pedido-checkout", kwargs={"id": pedido_aguardando.id})
         api_client.post(url)
 
         mock_asaas_client.criar_cliente.assert_called_once_with(
             nome=pedido_aguardando.nome,
             email=pedido_aguardando.email,
+            cpf_cnpj=pedido_aguardando.cpf_cnpj,
         )
 
     def test_checkout_creates_asaas_charge(
@@ -159,21 +160,40 @@ class TestCheckoutErrors:
 
         assert response.status_code == status.HTTP_409_CONFLICT
 
-    def test_asaas_error_returns_502(self, api_client, pedido_aguardando):
-        """Erro do Asaas retorna 502 com mensagem pastoral."""
+    def test_asaas_4xx_returns_422(self, api_client, pedido_aguardando):
+        """Asaas respondendo 4xx (dado inválido) retorna 422, não 502."""
         with patch("clama.payments.api.views.AsaasClient") as mock_class:
             mock_instance = MagicMock()
             mock_instance.criar_cliente.side_effect = AsaasIntegrationError(
-                message="Connection error"
+                message="Asaas rejected CPF",
+                upstream_status=400,
+                upstream_body={"errors": [{"code": "invalid_cpfCnpj"}]},
             )
             mock_class.return_value = mock_instance
 
             url = reverse("pedido-checkout", kwargs={"id": pedido_aguardando.id})
             response = api_client.post(url)
 
-        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert response.data["error"]["code"] == "asaas_integration_error"
         assert "soluço" in response.data["error"]["pastoral_message"]
+
+    def test_asaas_5xx_returns_503(self, api_client, pedido_aguardando):
+        """Asaas respondendo 5xx / rede indisponível retorna 503."""
+        with patch("clama.payments.api.views.AsaasClient") as mock_class:
+            mock_instance = MagicMock()
+            # upstream_status None simula rede/timeout após retries esgotados
+            mock_instance.criar_cliente.side_effect = AsaasIntegrationError(
+                message="Connection error",
+                upstream_status=None,
+            )
+            mock_class.return_value = mock_instance
+
+            url = reverse("pedido-checkout", kwargs={"id": pedido_aguardando.id})
+            response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.data["error"]["code"] == "asaas_integration_error"
 
     def test_asaas_error_keeps_pedido_status(self, api_client, pedido_aguardando):
         """Erro do Asaas não altera status do pedido."""
@@ -191,6 +211,59 @@ class TestCheckoutErrors:
 
         pedido_aguardando.refresh_from_db()
         assert pedido_aguardando.status == original_status
+
+    def test_pedido_sem_cpf_returns_422(self, api_client, mock_asaas_client):
+        """Pedido sem CPF retorna 422 antes de chamar a Asaas."""
+        pedido = PedidoFactory(
+            status=PedidoStatus.AGUARDANDO_PAGAMENTO,
+            cpf_cnpj="",
+        )
+
+        url = reverse("pedido-checkout", kwargs={"id": pedido.id})
+        response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.data["error"]["code"] == "cpf_cnpj_obrigatorio"
+        mock_asaas_client.criar_cliente.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+class TestCheckoutIdempotency:
+    """Testes de idempotência: reuso de cobrança existente."""
+
+    def test_reuses_existing_charge_without_calling_asaas(
+        self, api_client, mock_asaas_client
+    ):
+        """Pedido com charge_id+invoice_url já setados reutiliza e não chama a Asaas."""
+        pedido = PedidoFactory(
+            status=PedidoStatus.AGUARDANDO_PAGAMENTO,
+            asaas_charge_id="pay_existing",
+            asaas_invoice_url="https://sandbox.asaas.com/i/existing",
+        )
+
+        url = reverse("pedido-checkout", kwargs={"id": pedido.id})
+        response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["checkout_url"] == "https://sandbox.asaas.com/i/existing"
+        mock_asaas_client.criar_cliente.assert_not_called()
+        mock_asaas_client.criar_cobranca.assert_not_called()
+
+    def test_partial_state_does_not_trigger_reuse(
+        self, api_client, mock_asaas_client
+    ):
+        """charge_id sem invoice_url (estado inconsistente) não dispara reuso."""
+        pedido = PedidoFactory(
+            status=PedidoStatus.AGUARDANDO_PAGAMENTO,
+            asaas_charge_id="pay_existing",
+            asaas_invoice_url="",
+        )
+
+        url = reverse("pedido-checkout", kwargs={"id": pedido.id})
+        api_client.post(url)
+
+        mock_asaas_client.criar_cliente.assert_called_once()
+        mock_asaas_client.criar_cobranca.assert_called_once()
 
 
 @pytest.mark.django_db

@@ -1,6 +1,7 @@
 """
 Decorator de retry com backoff exponencial.
 """
+import contextvars
 import logging
 import time
 from functools import wraps
@@ -11,6 +12,15 @@ import requests
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+_current_attempt: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "retry_current_attempt", default=1
+)
+
+
+def get_current_attempt() -> int:
+    """Retorna a tentativa atual dentro de uma função decorada com @with_retry."""
+    return _current_attempt.get()
 
 
 def with_retry(
@@ -60,6 +70,7 @@ def with_retry(
             last_exc: Exception | None = None
 
             for attempt in range(1, max_attempts + 1):
+                _current_attempt.set(attempt)
                 try:
                     return func(*args, **kwargs)
                 except (requests.ConnectionError, requests.Timeout) as e:

@@ -9,7 +9,7 @@ from decimal import Decimal
 import requests
 from django.conf import settings
 
-from clama.core.retry import with_retry
+from clama.core.retry import get_current_attempt, with_retry
 from clama.payments.exceptions import AsaasIntegrationError
 
 logger = logging.getLogger("clama.payments.asaas_client")
@@ -44,9 +44,9 @@ class AsaasClient:
         method: str,
         endpoint: str,
         status: int | None,
-        attempt: int,
         duration_ms: float,
         error: str | None = None,
+        response_body=None,
     ) -> None:
         """Loga requisição estruturada (sem PII)."""
         log_data = {
@@ -54,16 +54,34 @@ class AsaasClient:
             "method": method,
             "endpoint": endpoint,
             "status": status,
-            "attempt": attempt,
+            "attempt": get_current_attempt(),
             "duration_ms": round(duration_ms, 2),
         }
         if error:
             log_data["error"] = error
+        if response_body is not None:
+            log_data["response_body"] = response_body
 
         if error or (status and status >= 400):
             logger.warning("Asaas request failed", extra=log_data)
         else:
             logger.info("Asaas request completed", extra=log_data)
+
+    @staticmethod
+    def _extract_response_body(response):
+        """
+        Extrai o corpo de uma resposta da Asaas para logging e exceções.
+
+        Returns:
+            dict se o body for JSON válido, string truncada (500 chars) caso contrário,
+            ou None se a response não existir.
+        """
+        if response is None:
+            return None
+        try:
+            return response.json()
+        except (ValueError, requests.exceptions.JSONDecodeError):
+            return response.text[:500] if response.text else None
 
     @with_retry(max_attempts=3, backoff_seconds=[1, 2, 4])
     def criar_cliente(
@@ -93,14 +111,8 @@ class AsaasClient:
             "name": nome,
             "email": email,
         }
-        # CPF/CNPJ é obrigatório para criar cobranças no Asaas
-        # TODO: Coletar CPF do usuário no formulário (Epic 4)
-        # Por enquanto, usa CPF de teste para sandbox
         if cpf_cnpj:
             payload["cpfCnpj"] = cpf_cnpj
-        elif settings.DEBUG:
-            # CPF válido para testes em sandbox
-            payload["cpfCnpj"] = "24971563792"
 
         start_time = time.time()
         try:
@@ -111,7 +123,6 @@ class AsaasClient:
                 method="POST",
                 endpoint=endpoint,
                 status=response.status_code,
-                attempt=1,
                 duration_ms=duration_ms,
             )
 
@@ -120,18 +131,22 @@ class AsaasClient:
 
         except requests.HTTPError as e:
             duration_ms = (time.time() - start_time) * 1000
+            upstream_status = e.response.status_code if e.response is not None else None
+            upstream_body = self._extract_response_body(e.response)
             self._log_request(
                 method="POST",
                 endpoint=endpoint,
-                status=e.response.status_code if e.response else None,
-                attempt=1,
+                status=upstream_status,
                 duration_ms=duration_ms,
                 error=str(e),
+                response_body=upstream_body,
             )
-            if e.response is not None and e.response.status_code >= 500:
+            if upstream_status is not None and upstream_status >= 500:
                 raise  # Será retentado pelo decorator
             raise AsaasIntegrationError(
-                message=f"Erro ao criar cliente no Asaas: {e}"
+                message=f"Erro ao criar cliente no Asaas (HTTP {upstream_status}): {upstream_body}",
+                upstream_status=upstream_status,
+                upstream_body=upstream_body,
             ) from e
 
         except (requests.ConnectionError, requests.Timeout) as e:
@@ -140,7 +155,6 @@ class AsaasClient:
                 method="POST",
                 endpoint=endpoint,
                 status=None,
-                attempt=1,
                 duration_ms=duration_ms,
                 error=str(e),
             )
@@ -209,7 +223,6 @@ class AsaasClient:
                 method="POST",
                 endpoint=endpoint,
                 status=response.status_code,
-                attempt=1,
                 duration_ms=duration_ms,
             )
 
@@ -218,18 +231,22 @@ class AsaasClient:
 
         except requests.HTTPError as e:
             duration_ms = (time.time() - start_time) * 1000
+            upstream_status = e.response.status_code if e.response is not None else None
+            upstream_body = self._extract_response_body(e.response)
             self._log_request(
                 method="POST",
                 endpoint=endpoint,
-                status=e.response.status_code if e.response else None,
-                attempt=1,
+                status=upstream_status,
                 duration_ms=duration_ms,
                 error=str(e),
+                response_body=upstream_body,
             )
-            if e.response is not None and e.response.status_code >= 500:
+            if upstream_status is not None and upstream_status >= 500:
                 raise  # Será retentado pelo decorator
             raise AsaasIntegrationError(
-                message=f"Erro ao criar cobrança no Asaas: {e}"
+                message=f"Erro ao criar cobrança no Asaas (HTTP {upstream_status}): {upstream_body}",
+                upstream_status=upstream_status,
+                upstream_body=upstream_body,
             ) from e
 
         except (requests.ConnectionError, requests.Timeout) as e:
@@ -238,7 +255,6 @@ class AsaasClient:
                 method="POST",
                 endpoint=endpoint,
                 status=None,
-                attempt=1,
                 duration_ms=duration_ms,
                 error=str(e),
             )

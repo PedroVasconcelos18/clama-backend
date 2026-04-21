@@ -56,18 +56,45 @@ class TestAsaasClientCriarCliente:
         assert call_kwargs["json"]["cpfCnpj"] == "12345678901"
 
     def test_criar_cliente_http_400_raises_immediately(self, asaas_client):
-        """Erro 400 não retenta e levanta AsaasIntegrationError."""
+        """Erro 400 não retenta e levanta AsaasIntegrationError com upstream status/body."""
         mock_response = MagicMock()
         mock_response.status_code = 400
+        mock_response.json.return_value = {
+            "errors": [{"code": "invalid_cpfCnpj", "description": "CPF inválido"}]
+        }
         http_error = requests.HTTPError(response=mock_response)
         mock_response.raise_for_status.side_effect = http_error
 
         with patch.object(asaas_client.session, "post", return_value=mock_response):
-            with pytest.raises(AsaasIntegrationError):
+            with pytest.raises(AsaasIntegrationError) as exc_info:
                 asaas_client.criar_cliente(
                     nome="Maria Silva",
                     email="maria@example.com",
                 )
+
+        assert exc_info.value.upstream_status == 400
+        assert exc_info.value.upstream_body == {
+            "errors": [{"code": "invalid_cpfCnpj", "description": "CPF inválido"}]
+        }
+
+    def test_criar_cliente_http_400_captures_non_json_body(self, asaas_client):
+        """Se o body da Asaas não for JSON, captura texto truncado em 500 chars."""
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.text = "Plain text error"
+        http_error = requests.HTTPError(response=mock_response)
+        mock_response.raise_for_status.side_effect = http_error
+
+        with patch.object(asaas_client.session, "post", return_value=mock_response):
+            with pytest.raises(AsaasIntegrationError) as exc_info:
+                asaas_client.criar_cliente(
+                    nome="Maria Silva",
+                    email="maria@example.com",
+                )
+
+        assert exc_info.value.upstream_status == 400
+        assert exc_info.value.upstream_body == "Plain text error"
 
 
 class TestAsaasClientCriarCobranca:
@@ -89,6 +116,7 @@ class TestAsaasClientCriarCobranca:
                 customer_id="cus_12345",
                 valor_centavos=2000,
                 descricao="Pedido de Oração",
+                pedido_id="pedido-123",
             )
 
         assert result["id"] == "pay_12345"
@@ -107,6 +135,7 @@ class TestAsaasClientCriarCobranca:
                 customer_id="cus_12345",
                 valor_centavos=2500,  # R$ 25,00
                 descricao="Pedido de Oração",
+                pedido_id="pedido-123",
             )
 
         call_kwargs = mock_post.call_args[1]
