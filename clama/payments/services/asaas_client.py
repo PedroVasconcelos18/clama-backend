@@ -199,20 +199,23 @@ class AsaasClient:
         payload = {
             "customer": customer_id,
             "billingType": billing_type,
-            "value": float(valor_reais),
+            # round evita bits de imprecisão quando Decimal vira float
+            # (ex: Decimal("19.99") → 19.989999... em alguns casos).
+            "value": round(float(valor_reais), 2),
             "dueDate": date.today().isoformat(),
             "description": descricao,
             "externalReference": pedido_id,  # Para identificar o pedido no webhook
         }
 
-        # Callback só funciona com domínio cadastrado no Asaas
-        # TODO: Configurar domínio em Minha Conta > Informações no Asaas
-        # frontend_url = getattr(settings, "FRONTEND_URL", "")
-        # if frontend_url and not settings.DEBUG:
-        #     payload["callback"] = {
-        #         "successUrl": f"{frontend_url}/confirmacao?pedido_id={pedido_id}",
-        #         "autoRedirect": True,
-        #     }
+        # Redireciona o usuário pra /confirmacao?pedido_id=X após pagar.
+        # Requer domínio cadastrado em Minha Conta > Informações no Asaas;
+        # senão a Asaas ignora silenciosamente (sem erro).
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        if frontend_url:
+            payload["callback"] = {
+                "successUrl": f"{frontend_url}/confirmacao?pedido_id={pedido_id}",
+                "autoRedirect": True,
+            }
 
         start_time = time.time()
         try:

@@ -141,6 +141,77 @@ class TestAsaasClientCriarCobranca:
         call_kwargs = mock_post.call_args[1]
         assert call_kwargs["json"]["value"] == 25.0
 
+    def test_criar_cobranca_rounds_value_to_two_decimals(self, asaas_client):
+        """Valor é arredondado em 2 casas pra evitar imprecisão de float."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "pay_12345"}
+        mock_response.raise_for_status.return_value = None
+
+        with patch.object(asaas_client.session, "post", return_value=mock_response) as mock_post:
+            asaas_client.criar_cobranca(
+                customer_id="cus_12345",
+                valor_centavos=1999,  # R$ 19,99 — caso clássico de imprecisão
+                descricao="Pedido de Oração",
+                pedido_id="pedido-123",
+            )
+
+        assert mock_post.call_args[1]["json"]["value"] == 19.99
+
+    def test_criar_cobranca_adds_callback_when_frontend_url_configured(
+        self, asaas_client
+    ):
+        """Adiciona callback.successUrl apontando pra /confirmacao?pedido_id=X."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "pay_12345"}
+        mock_response.raise_for_status.return_value = None
+
+        with patch(
+            "clama.payments.services.asaas_client.settings"
+        ) as mock_settings:
+            mock_settings.FRONTEND_URL = "https://clama.me/"
+            with patch.object(
+                asaas_client.session, "post", return_value=mock_response
+            ) as mock_post:
+                asaas_client.criar_cobranca(
+                    customer_id="cus_12345",
+                    valor_centavos=500,
+                    descricao="Pedido de Oração",
+                    pedido_id="pedido-123",
+                )
+
+        callback = mock_post.call_args[1]["json"]["callback"]
+        assert callback["successUrl"] == (
+            "https://clama.me/confirmacao?pedido_id=pedido-123"
+        )
+        assert callback["autoRedirect"] is True
+
+    def test_criar_cobranca_omits_callback_when_frontend_url_empty(
+        self, asaas_client
+    ):
+        """Sem FRONTEND_URL configurado, callback não é enviado."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "pay_12345"}
+        mock_response.raise_for_status.return_value = None
+
+        with patch(
+            "clama.payments.services.asaas_client.settings"
+        ) as mock_settings:
+            mock_settings.FRONTEND_URL = ""
+            with patch.object(
+                asaas_client.session, "post", return_value=mock_response
+            ) as mock_post:
+                asaas_client.criar_cobranca(
+                    customer_id="cus_12345",
+                    valor_centavos=500,
+                    descricao="Pedido de Oração",
+                    pedido_id="pedido-123",
+                )
+
+        assert "callback" not in mock_post.call_args[1]["json"]
+
 
 class TestAsaasClientRetry:
     """Testes de retry do AsaasClient."""
