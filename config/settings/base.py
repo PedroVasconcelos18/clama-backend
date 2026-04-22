@@ -368,6 +368,10 @@ ASAAS_BASE_URL = env(
     "ASAAS_BASE_URL",
     default="https://sandbox.asaas.com/api/v3",
 )
+# Valor mínimo da cobrança em centavos. A Asaas rejeita cobranças abaixo de
+# R$5,00 (500 centavos) com "O valor da cobrança não pode ser menor que R$ 5,00"
+# — limite global aplicado a qualquer billingType (PIX, boleto, cartão).
+ASAAS_MIN_VALOR_CENTAVOS = env.int("ASAAS_MIN_VALOR_CENTAVOS", default=500)
 
 # Frontend URL (for redirect callbacks)
 # -------------------------------------------------------------------------------

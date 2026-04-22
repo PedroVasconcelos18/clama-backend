@@ -259,6 +259,24 @@ class TestCheckoutErrors:
         assert response.data["error"]["code"] == "cpf_cnpj_obrigatorio"
         mock_asaas_client.criar_cliente.assert_not_called()
 
+    def test_pedido_com_valor_abaixo_minimo_returns_422(
+        self, api_client, mock_asaas_client
+    ):
+        """Pedido com valor < ASAAS_MIN_VALOR_CENTAVOS retorna 422 antes de chamar a Asaas."""
+        pedido = PedidoFactory(
+            status=PedidoStatus.AGUARDANDO_PAGAMENTO,
+            valor_centavos=199,  # R$ 1,99 — abaixo do mínimo de R$ 5,00 da Asaas
+        )
+
+        url = reverse("pedido-checkout", kwargs={"id": pedido.id})
+        response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.data["error"]["code"] == "valor_abaixo_do_minimo"
+        assert "R$ 5,00" in response.data["error"]["pastoral_message"]
+        mock_asaas_client.criar_cliente.assert_not_called()
+        mock_asaas_client.criar_cobranca.assert_not_called()
+
 
 @pytest.mark.django_db(transaction=True)
 class TestCheckoutIdempotency:

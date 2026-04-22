@@ -14,6 +14,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from clama.core.exceptions import PastoralAPIException
+from clama.core.money import centavos_to_reais_str
 from clama.orders.models import Pedido, PedidoStatus
 from clama.payments.exceptions import AsaasIntegrationError
 from clama.payments.services.asaas_client import AsaasClient
@@ -132,7 +133,8 @@ class CheckoutView(APIView):
         genérico que quebraria o fluxo.
 
         Raises:
-            PastoralAPIException: Se dados obrigatórios estiverem ausentes (422).
+            PastoralAPIException: Se dados obrigatórios estiverem ausentes (422)
+                ou se o valor for menor que o mínimo aceito pela Asaas (422).
         """
         if not pedido.cpf_cnpj:
             raise PastoralAPIException(
@@ -141,6 +143,22 @@ class CheckoutView(APIView):
                 pastoral_message=(
                     "Precisamos do seu CPF para gerar a cobrança. "
                     "Volte ao formulário e complete o cadastro."
+                ),
+                status_code=422,
+            )
+
+        min_centavos = getattr(settings, "ASAAS_MIN_VALOR_CENTAVOS", 500)
+        if pedido.valor_centavos < min_centavos:
+            min_str = centavos_to_reais_str(min_centavos)
+            raise PastoralAPIException(
+                code="valor_abaixo_do_minimo",
+                message=(
+                    f"Valor da cobrança ({centavos_to_reais_str(pedido.valor_centavos)}) "
+                    f"é menor que o mínimo aceito ({min_str})"
+                ),
+                pastoral_message=(
+                    f"O valor mínimo aceito pelo processador de pagamentos é {min_str}. "
+                    "Escolha um valor igual ou maior pra continuar."
                 ),
                 status_code=422,
             )
