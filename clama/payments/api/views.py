@@ -135,7 +135,8 @@ criam nova cobrança ou reutilizam existente (Epic 3 endurece idempotência).
 
 **Status permitido:** Apenas AGUARDANDO_PAGAMENTO. Pedidos já pagos retornam 409.
 
-**Tipos de pagamento:** Pix, Boleto e Cartão de Crédito são aceitos.
+**Tipo de pagamento:** Pix (boleto tem mínimo de R$5 na Asaas, incompatível
+com planos de valor livre abaixo desse valor).
         """,
         responses={
             200: OpenApiResponse(
@@ -200,11 +201,14 @@ criam nova cobrança ou reutilizam existente (Epic 3 endurece idempotência).
                 # Descrição curta sem PII
                 descricao = f"Pedido Clama #{str(pedido.id)[:8]}"
 
+                # PIX-only: boleto exige mínimo R$5 na Asaas e cartão tem mínimo R$3;
+                # PIX aceita R$0,01+, compatível com planos de valor livre.
                 charge_data = self.client.criar_cobranca(
                     customer_id=customer_id,
                     valor_centavos=pedido.valor_centavos,
                     descricao=descricao,
                     pedido_id=str(pedido.id),
+                    billing_types=["PIX"],
                 )
 
                 pedido.asaas_charge_id = charge_data["id"]

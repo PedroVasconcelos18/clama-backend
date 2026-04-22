@@ -103,7 +103,7 @@ class TestCheckoutHappyPath:
     def test_checkout_creates_asaas_charge(
         self, api_client, pedido_aguardando, mock_asaas_client
     ):
-        """Checkout deve chamar criar_cobranca com dados corretos."""
+        """Checkout deve chamar criar_cobranca com dados corretos e billing_types=PIX."""
         url = reverse("pedido-checkout", kwargs={"id": pedido_aguardando.id})
         api_client.post(url)
 
@@ -112,6 +112,8 @@ class TestCheckoutHappyPath:
         assert call_kwargs["customer_id"] == "cus_12345"
         assert call_kwargs["valor_centavos"] == pedido_aguardando.valor_centavos
         assert "Pedido Clama #" in call_kwargs["descricao"]
+        # PIX-only: evita mínimo de R$5 do boleto em planos de valor livre
+        assert call_kwargs["billing_types"] == ["PIX"]
 
     def test_checkout_persists_asaas_ids(
         self, api_client, pedido_aguardando, mock_asaas_client
