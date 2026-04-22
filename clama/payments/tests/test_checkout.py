@@ -162,14 +162,23 @@ class TestCheckoutErrors:
 
         assert response.status_code == status.HTTP_409_CONFLICT
 
-    def test_asaas_4xx_returns_422(self, api_client, pedido_aguardando):
-        """Asaas respondendo 4xx (dado inválido) retorna 422, não 502."""
+    def test_asaas_4xx_returns_422_with_asaas_description(
+        self, api_client, pedido_aguardando
+    ):
+        """Asaas 4xx retorna 422 com a description da Asaas como pastoral_message."""
         with patch("clama.payments.api.views.AsaasClient") as mock_class:
             mock_instance = MagicMock()
             mock_instance.criar_cliente.side_effect = AsaasIntegrationError(
                 message="Asaas rejected CPF",
                 upstream_status=400,
-                upstream_body={"errors": [{"code": "invalid_cpfCnpj"}]},
+                upstream_body={
+                    "errors": [
+                        {
+                            "code": "invalid_object",
+                            "description": "O CPF/CNPJ informado é inválido.",
+                        }
+                    ]
+                },
             )
             mock_class.return_value = mock_instance
 
@@ -178,6 +187,28 @@ class TestCheckoutErrors:
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert response.data["error"]["code"] == "asaas_integration_error"
+        assert (
+            response.data["error"]["pastoral_message"]
+            == "O CPF/CNPJ informado é inválido."
+        )
+
+    def test_asaas_4xx_without_description_falls_back_to_pastoral(
+        self, api_client, pedido_aguardando
+    ):
+        """Quando o body da Asaas não tem description, usa a mensagem pastoral padrão."""
+        with patch("clama.payments.api.views.AsaasClient") as mock_class:
+            mock_instance = MagicMock()
+            mock_instance.criar_cliente.side_effect = AsaasIntegrationError(
+                message="Asaas rejected",
+                upstream_status=400,
+                upstream_body={"errors": []},
+            )
+            mock_class.return_value = mock_instance
+
+            url = reverse("pedido-checkout", kwargs={"id": pedido_aguardando.id})
+            response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert "soluço" in response.data["error"]["pastoral_message"]
 
     def test_asaas_5xx_returns_503(self, api_client, pedido_aguardando):

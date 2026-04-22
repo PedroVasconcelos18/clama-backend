@@ -21,6 +21,27 @@ from clama.payments.services.asaas_client import AsaasClient
 logger = logging.getLogger("clama.payments.api")
 
 
+def _pastoral_message_from_asaas_error(upstream_body, fallback: str) -> str:
+    """
+    Extrai a mensagem humana da primeira `description` em `errors[]` do body
+    da Asaas. Descrições da Asaas já vêm em pt-BR e cobrem casos como
+    CPF inválido, valor mínimo, cliente inexistente etc.
+    Retorna o fallback quando o body não tem o formato esperado.
+    """
+    if not isinstance(upstream_body, dict):
+        return fallback
+    errors = upstream_body.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return fallback
+    first = errors[0]
+    if not isinstance(first, dict):
+        return fallback
+    description = first.get("description")
+    if isinstance(description, str) and description.strip():
+        return description.strip()
+    return fallback
+
+
 class CheckoutResponseSerializer(serializers.Serializer):
     """Serializer para resposta do checkout."""
 
@@ -237,8 +258,13 @@ com planos de valor livre abaixo desse valor).
                 # Usar 502 aqui quebra CORS: a Cloudflare substitui o body pela própria página de erro.
                 if e.upstream_status is not None and 400 <= e.upstream_status < 500:
                     response_status = 422
+                    # Em 4xx, a Asaas informa o motivo real — repassa pro usuário.
+                    pastoral = _pastoral_message_from_asaas_error(
+                        e.upstream_body, e.pastoral_message
+                    )
                 else:
                     response_status = 503
+                    pastoral = e.pastoral_message
 
                 logger.error(
                     "Checkout failed",
@@ -253,6 +279,6 @@ com planos de valor livre abaixo desse valor).
                 raise PastoralAPIException(
                     code=e.code,
                     message=e.message,
-                    pastoral_message=e.pastoral_message,
+                    pastoral_message=pastoral,
                     status_code=response_status,
                 )
