@@ -142,8 +142,8 @@ class TestPedidoCreateValidation:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_valor_below_minimum_returns_400(self, api_client, valid_pedido_data):
-        """Valor abaixo de R$ 1,99 (199 centavos) retorna 400."""
-        valid_pedido_data["valor_centavos"] = 198
+        """Valor abaixo de R$ 5,99 (599 centavos) retorna 400."""
+        valid_pedido_data["valor_centavos"] = 598
         url = reverse("pedido-create")
         response = api_client.post(url, valid_pedido_data, format="json")
 
@@ -270,8 +270,8 @@ class TestPedidoCreateValorLivre:
         assert pedido.valor_centavos == 15000
 
     def test_valor_livre_abaixo_minimo_retorna_400(self, api_client, tres_planos):
-        """Valor < R$ 1,99 deve ser rejeitado mesmo sem plano explícito."""
-        data = {**self._base_data(), "valor_centavos": 150}
+        """Valor < R$ 5,99 deve ser rejeitado mesmo sem plano explícito."""
+        data = {**self._base_data(), "valor_centavos": 500}
         url = reverse("pedido-create")
         response = api_client.post(url, data, format="json")
 
