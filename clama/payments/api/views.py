@@ -4,6 +4,7 @@ Views da API de pagamentos.
 
 import logging
 
+import sentry_sdk
 from django.conf import settings
 from django.db import transaction
 from drf_spectacular.utils import OpenApiResponse, extend_schema
@@ -22,25 +23,73 @@ from clama.payments.services.asaas_client import AsaasClient
 logger = logging.getLogger("clama.payments.api")
 
 
-def _pastoral_message_from_asaas_error(upstream_body, fallback: str) -> str:
+# Pastoral genérica para erros operacionais/configuração da Asaas que o
+# usuário final não consegue resolver (URL de callback inválida, conta sem
+# domínio cadastrado, credencial errada etc.). Esconde o detalhe técnico.
+MSG_PAYMENT_CONFIG_ERROR = (
+    "Tivemos um soluço processando seu pagamento. Já estamos olhando — "
+    "tenta de novo em alguns instantes ou escreve pra contato@clama.me."
+)
+
+# Trechos que indicam erro de configuração/admin (nada que o usuário possa
+# corrigir). Comparação case-insensitive contra a `description` da Asaas.
+_ASAAS_ADMIN_SIDE_KEYWORDS = (
+    "callback",
+    "url informada",
+    "configurações",
+    "configuracao",
+    "domínio",
+    "dominio",
+    "credencial",
+    "api key",
+    "api_key",
+    "token",
+    "autenticação",
+    "autenticacao",
+    "permissão",
+    "permissao",
+    "conta inativa",
+    "conta suspensa",
+)
+
+
+def _is_admin_side_asaas_error(description: str) -> bool:
+    """True se a description da Asaas aponta erro que só o admin resolve."""
+    if not description:
+        return False
+    lowered = description.lower()
+    return any(keyword in lowered for keyword in _ASAAS_ADMIN_SIDE_KEYWORDS)
+
+
+def _pastoral_message_from_asaas_error(upstream_body, fallback: str) -> tuple[str, bool]:
     """
     Extrai a mensagem humana da primeira `description` em `errors[]` do body
     da Asaas. Descrições da Asaas já vêm em pt-BR e cobrem casos como
     CPF inválido, valor mínimo, cliente inexistente etc.
-    Retorna o fallback quando o body não tem o formato esperado.
+
+    Quando a descrição aponta um problema de configuração/admin (callback URL,
+    domínio não cadastrado, credencial), substitui por uma pastoral genérica
+    para não vazar jargão técnico ao usuário.
+
+    Retorna `(mensagem, is_admin_side)` — o flag indica se vale alertar o admin
+    via Sentry.
     """
     if not isinstance(upstream_body, dict):
-        return fallback
+        return fallback, False
     errors = upstream_body.get("errors")
     if not isinstance(errors, list) or not errors:
-        return fallback
+        return fallback, False
     first = errors[0]
     if not isinstance(first, dict):
-        return fallback
+        return fallback, False
     description = first.get("description")
-    if isinstance(description, str) and description.strip():
-        return description.strip()
-    return fallback
+    if not (isinstance(description, str) and description.strip()):
+        return fallback, False
+
+    description = description.strip()
+    if _is_admin_side_asaas_error(description):
+        return MSG_PAYMENT_CONFIG_ERROR, True
+    return description, False
 
 
 class CheckoutResponseSerializer(serializers.Serializer):
@@ -274,10 +323,12 @@ com planos de valor livre abaixo desse valor).
             except AsaasIntegrationError as e:
                 # 4xx da Asaas = dados rejeitados (422). Rede/timeout/5xx = upstream fora (503).
                 # Usar 502 aqui quebra CORS: a Cloudflare substitui o body pela própria página de erro.
+                is_admin_side = False
                 if e.upstream_status is not None and 400 <= e.upstream_status < 500:
                     response_status = 422
-                    # Em 4xx, a Asaas informa o motivo real — repassa pro usuário.
-                    pastoral = _pastoral_message_from_asaas_error(
+                    # Em 4xx, a Asaas informa o motivo real — repassa pro usuário,
+                    # exceto quando for problema de configuração (admin-side).
+                    pastoral, is_admin_side = _pastoral_message_from_asaas_error(
                         e.upstream_body, e.pastoral_message
                     )
                 else:
@@ -292,8 +343,16 @@ com planos de valor livre abaixo desse valor).
                         "error": str(e),
                         "upstream_status": e.upstream_status,
                         "upstream_body": e.upstream_body,
+                        "admin_side": is_admin_side,
                     },
                 )
+                # Erros de configuração da Asaas (callback URL, domínio etc.)
+                # são silenciosos para o usuário mas precisam alertar admin.
+                if is_admin_side:
+                    sentry_sdk.capture_message(
+                        f"Asaas admin-side error no checkout: {e.upstream_body}",
+                        level="error",
+                    )
                 raise PastoralAPIException(
                     code=e.code,
                     message=e.message,

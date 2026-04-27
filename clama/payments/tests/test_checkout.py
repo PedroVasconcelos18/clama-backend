@@ -211,6 +211,79 @@ class TestCheckoutErrors:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert "soluço" in response.data["error"]["pastoral_message"]
 
+    def test_asaas_callback_url_error_hides_admin_detail(
+        self, api_client, pedido_aguardando
+    ):
+        """
+        Erro de callback URL inválida (admin-side) é substituído por pastoral
+        genérica e dispara alerta no Sentry — usuário não vê o jargão técnico.
+        """
+        with patch("clama.payments.api.views.AsaasClient") as mock_class, patch(
+            "clama.payments.api.views.sentry_sdk.capture_message"
+        ) as mock_sentry:
+            mock_instance = MagicMock()
+            mock_instance.criar_cliente.return_value = {"id": "cus_123"}
+            mock_instance.criar_cobranca.side_effect = AsaasIntegrationError(
+                message="Asaas rejected callback",
+                upstream_status=400,
+                upstream_body={
+                    "errors": [
+                        {
+                            "code": "invalid_action",
+                            "description": (
+                                "A URL informada nas configurações de callback é inválida."
+                            ),
+                        }
+                    ]
+                },
+            )
+            mock_class.return_value = mock_instance
+
+            url = reverse("pedido-checkout", kwargs={"id": pedido_aguardando.id})
+            response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        # Pastoral genérica — sem mencionar "callback" ou "URL"
+        msg = response.data["error"]["pastoral_message"]
+        assert "callback" not in msg.lower()
+        assert "url" not in msg.lower()
+        assert "soluço" in msg or "olhando" in msg
+        # Admin foi avisado
+        mock_sentry.assert_called_once()
+
+    def test_asaas_user_side_error_keeps_description(
+        self, api_client, pedido_aguardando
+    ):
+        """Erro user-side (CPF inválido) preserva a description da Asaas."""
+        with patch("clama.payments.api.views.AsaasClient") as mock_class, patch(
+            "clama.payments.api.views.sentry_sdk.capture_message"
+        ) as mock_sentry:
+            mock_instance = MagicMock()
+            mock_instance.criar_cliente.side_effect = AsaasIntegrationError(
+                message="Asaas rejected CPF",
+                upstream_status=400,
+                upstream_body={
+                    "errors": [
+                        {
+                            "code": "invalid_object",
+                            "description": "O CPF/CNPJ informado é inválido.",
+                        }
+                    ]
+                },
+            )
+            mock_class.return_value = mock_instance
+
+            url = reverse("pedido-checkout", kwargs={"id": pedido_aguardando.id})
+            response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert (
+            response.data["error"]["pastoral_message"]
+            == "O CPF/CNPJ informado é inválido."
+        )
+        # Erro do usuário não vai pro Sentry
+        mock_sentry.assert_not_called()
+
     def test_asaas_5xx_returns_503(self, api_client, pedido_aguardando):
         """Asaas respondendo 5xx / rede indisponível retorna 503."""
         with patch("clama.payments.api.views.AsaasClient") as mock_class:
