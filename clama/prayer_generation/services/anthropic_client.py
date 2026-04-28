@@ -119,6 +119,8 @@ class AnthropicClient:
         attempt: int,
         duration_ms: float,
         tokens_used: int | None = None,
+        cache_creation_tokens: int | None = None,
+        cache_read_tokens: int | None = None,
         error: str | None = None,
     ) -> None:
         """Loga requisição estruturada (sem PII)."""
@@ -131,6 +133,10 @@ class AnthropicClient:
         }
         if tokens_used is not None:
             log_data["tokens_used"] = tokens_used
+        if cache_creation_tokens is not None:
+            log_data["cache_creation_tokens"] = cache_creation_tokens
+        if cache_read_tokens is not None:
+            log_data["cache_read_tokens"] = cache_read_tokens
         if error:
             log_data["error"] = error
 
@@ -196,7 +202,13 @@ class AnthropicClient:
             response = self.client.messages.create(
                 model=MODEL_NAME,
                 max_tokens=MAX_TOKENS,
-                system=system_prompt,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[{"role": "user", "content": user_content}],
                 timeout=REQUEST_TIMEOUT,
                 extra_headers=extra_headers if extra_headers else None,
@@ -206,6 +218,12 @@ class AnthropicClient:
             # Extrai texto e métricas
             text = response.content[0].text
             tokens_used = response.usage.output_tokens
+            cache_creation_tokens = getattr(
+                response.usage, "cache_creation_input_tokens", None
+            )
+            cache_read_tokens = getattr(
+                response.usage, "cache_read_input_tokens", None
+            )
 
             self._log_request(
                 model=MODEL_NAME,
@@ -213,6 +231,8 @@ class AnthropicClient:
                 attempt=1,
                 duration_ms=duration_ms,
                 tokens_used=tokens_used,
+                cache_creation_tokens=cache_creation_tokens,
+                cache_read_tokens=cache_read_tokens,
             )
 
             return text
@@ -296,7 +316,13 @@ class AnthropicClient:
             response = self.client.messages.create(
                 model=MODEL_NAME,
                 max_tokens=MAX_TOKENS,
-                system=system_prompt,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[{"role": "user", "content": user_message}],
                 timeout=REQUEST_TIMEOUT,
             )

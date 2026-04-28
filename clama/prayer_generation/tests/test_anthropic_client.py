@@ -102,7 +102,13 @@ class TestAnthropicClientHappyPath:
             client.gerar_oracao(pedido)
 
         call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["system"] == "Sistema de oração pastoral."
+        assert call_kwargs["system"] == [
+            {
+                "type": "text",
+                "text": "Sistema de oração pastoral.",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
 
 @pytest.mark.django_db
