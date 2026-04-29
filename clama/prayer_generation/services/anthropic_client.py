@@ -22,7 +22,7 @@ from clama.prompts.models import PromptTemplate
 logger = logging.getLogger("clama.prayer_generation.anthropic_client")
 
 # Modelo Claude para geração de orações
-MODEL_NAME = "claude-sonnet-4-20250514"
+MODEL_NAME = "claude-sonnet-4-6"
 MAX_TOKENS = 1500
 REQUEST_TIMEOUT = 30.0
 

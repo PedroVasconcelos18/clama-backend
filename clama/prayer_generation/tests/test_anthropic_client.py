@@ -83,7 +83,7 @@ class TestAnthropicClientHappyPath:
         mock_client.messages.create.assert_called_once()
         call_kwargs = mock_client.messages.create.call_args[1]
 
-        assert call_kwargs["model"] == "claude-sonnet-4-20250514"
+        assert call_kwargs["model"] == "claude-sonnet-4-6"
         assert call_kwargs["max_tokens"] == 1500
         assert call_kwargs["timeout"] == 30.0
         assert "system" in call_kwargs
