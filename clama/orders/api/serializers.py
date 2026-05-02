@@ -180,6 +180,7 @@ class PedidoStatusSerializer(serializers.ModelSerializer):
     plano = serializers.CharField(source="plano.nome", read_only=True)
     valor_reais_str = serializers.CharField(read_only=True)
     pastoral_message = serializers.SerializerMethodField()
+    oracao_gerada = serializers.SerializerMethodField()
 
     class Meta:
         model = Pedido
@@ -191,10 +192,17 @@ class PedidoStatusSerializer(serializers.ModelSerializer):
             "canal_entrega",
             "created_at",
             "pastoral_message",
+            "oracao_gerada",
         ]
 
     def get_pastoral_message(self, obj: Pedido) -> str | None:
         """Mensagem pastoral contextual (ex.: 24h quando créditos esgotaram)."""
         if obj.status == PedidoStatus.ERRO and obj.last_error == "credit_balance":
             return MSG_ERRO_CREDITOS_24H
+        return None
+
+    def get_oracao_gerada(self, obj: Pedido) -> str | None:
+        # Só expõe a oração após a entrega; antes disso o front recebe None.
+        if obj.status == PedidoStatus.ENVIADA:
+            return obj.oracao_gerada or None
         return None

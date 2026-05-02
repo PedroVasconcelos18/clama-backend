@@ -9,6 +9,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from clama.orders.models import PedidoStatus
 from clama.orders.tests.factories import PedidoFactory
 
 
@@ -57,7 +58,7 @@ class TestPedidoStatusAPI:
         assert "created_at" in response.data
 
     def test_get_pedido_does_not_return_sensitive_data(self, api_client, pedido):
-        """Resposta não deve conter dados sensíveis."""
+        """Resposta não deve conter dados pessoais nem o pedido bruto."""
         url = reverse("pedido-status", kwargs={"id": pedido.id})
         response = api_client.get(url)
 
@@ -66,7 +67,9 @@ class TestPedidoStatusAPI:
         assert "email" not in response.data
         assert "telefone" not in response.data
         assert "pedido_oracao" not in response.data
-        assert "oracao_gerada" not in response.data
+        # oracao_gerada é exposta condicionalmente (apenas quando status=enviada);
+        # para um pedido em estado inicial, deve vir como None.
+        assert response.data.get("oracao_gerada") is None
 
     def test_get_pedido_returns_plano_nome(self, api_client, pedido):
         """plano deve retornar o nome do plano, não o ID."""
@@ -75,6 +78,33 @@ class TestPedidoStatusAPI:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["plano"] == pedido.plano.nome
+
+    def test_oracao_gerada_returned_when_status_enviada(self, api_client):
+        """Quando o pedido está em ENVIADA, a oração gerada deve aparecer no payload."""
+        texto_oracao = "Senhor, abençoa esta família com paz e luz."
+        pedido_enviado = PedidoFactory(
+            status=PedidoStatus.ENVIADA,
+            oracao_gerada=texto_oracao,
+        )
+
+        url = reverse("pedido-status", kwargs={"id": pedido_enviado.id})
+        response = api_client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["oracao_gerada"] == texto_oracao
+
+    def test_oracao_gerada_null_when_status_not_enviada(self, api_client):
+        """Em qualquer status que não seja ENVIADA, oracao_gerada vem como None."""
+        pedido_pago = PedidoFactory(
+            status=PedidoStatus.PAGO,
+            oracao_gerada="texto que ainda não deve vazar",
+        )
+
+        url = reverse("pedido-status", kwargs={"id": pedido_pago.id})
+        response = api_client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["oracao_gerada"] is None
 
 
 @pytest.mark.django_db
