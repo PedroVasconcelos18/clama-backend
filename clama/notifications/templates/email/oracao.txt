@@ -6,6 +6,11 @@ Querida {{ primeiro_nome }},
 
 ---
 
+Compartilhar no WhatsApp:
+{{ whatsapp_share_url }}
+
+---
+
 "Perto está o Senhor dos que têm o coração quebrantado
 e salva os de espírito oprimido."
 — Salmo 34:18
