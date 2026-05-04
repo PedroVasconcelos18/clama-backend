@@ -1,6 +1,8 @@
 CLAMA.
 
-Querida {{ primeiro_nome }},
+Paz e bem, {{ primeiro_nome }}.
+
+Sua oração foi escrita com carinho — que ela seja bálsamo nestes dias:
 
 {{ oracao }}
 
