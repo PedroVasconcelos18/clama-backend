@@ -36,14 +36,27 @@ class EmailScopedThrottle(SimpleRateThrottle):
 
     def _get_email_from_request(self, request) -> str | None:
         """
-        Extrai email do body do request.
+        Extrai email para chave de throttle.
+
+        G2.a paywall: hardening contra bypass via payload com auth.
+        Ordem de preferência:
+          1. `request.user.email` quando autenticado — fixa a identidade
+             real e impede que um cliente logado burle o throttle variando
+             o campo `email` do body em cada POST.
+          2. `request.data['email']` quando anônimo (cenário freemium
+             pré-paywall, mantém compatibilidade).
 
         Args:
             request: Request HTTP
 
         Returns:
-            Email ou None se não encontrado
+            Email ou None se não encontrado em nenhum dos dois lugares.
         """
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            email = getattr(user, "email", None)
+            if email:
+                return email
         if hasattr(request, "data"):
             return request.data.get("email")
         return None

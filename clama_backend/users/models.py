@@ -98,6 +98,17 @@ class User(AbstractUser):
         help_text="Indica que o usuário deve trocar a senha no próximo login.",
     )
 
+    # Marca o momento em que o usuário consumiu o pedido grátis (saga freemium).
+    # Setado dentro da `transaction.atomic()` da `FreemiumConfirmarView._executar_saga`
+    # antes do `marcar_usado` do token. Indexado para permitir queries
+    # analíticas e segmentação anti-fraude futura.
+    freemium_used_at = models.DateTimeField(
+        "Usou freemium em",
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
     objects = UserManager()
 
     USERNAME_FIELD = "email"

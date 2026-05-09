@@ -2,7 +2,11 @@
 Handlers customizados para exceções DRF.
 """
 
-from rest_framework.exceptions import Throttled
+from rest_framework.exceptions import (
+    AuthenticationFailed,
+    NotAuthenticated,
+    Throttled,
+)
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 
@@ -50,6 +54,29 @@ def pastoral_exception_handler(exc, context):
                 }
             },
             status=429,
+        )
+
+    # P-16 (G2.a): pastoraliza 401 do paywall. `IsAuthenticated` levanta
+    # `NotAuthenticated` quando o usuário é anônimo; algumas auth backends
+    # do DRF levantam `AuthenticationFailed` para credenciais inválidas
+    # (ex.: Bearer expirado). Em ambos os casos queremos a mesma mensagem
+    # pastoral genérica. Se a exceção foi levantada com um detail dict
+    # já no formato pastoral (caso de `CustomerLogoutView` cross-user e
+    # outros), preserva o payload original — apenas transforma quando
+    # o detail é a string genérica do DRF.
+    if isinstance(exc, (NotAuthenticated, AuthenticationFailed)):
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, dict) and "error" in detail:
+            return Response(detail, status=exc.status_code)
+        return Response(
+            {
+                "error": {
+                    "code": "not_authenticated",
+                    "message": "Authentication required",
+                    "pastoral_message": "Faça login pra continuar.",
+                }
+            },
+            status=exc.status_code,
         )
 
     # Fallback para o handler padrão do DRF

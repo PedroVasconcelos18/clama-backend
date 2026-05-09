@@ -76,6 +76,10 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
+    # `token_blacklist` registra refresh tokens revogados/rotacionados. Sem ele,
+    # `BLACKLIST_AFTER_ROTATION=True` em SIMPLE_JWT é inerte e o logout customer
+    # não consegue revogar refresh tokens (G2.a — paywall + logout).
+    "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
     "corsheaders",
     "anymail",
@@ -343,6 +347,9 @@ REST_FRAMEWORK = {
         "pedidos_status": "60/min",
         "pedidos_checkout": "10/min",
         "admin_login": "5/min",
+        # Customer auth (G2.a) — login por IP e change-password por usuário.
+        "customer_login": "5/min",
+        "customer_change_password": "10/hour",
         # Freemium (pedido gratuito) — limite anti-fraude por IP.
         # Pós-renegociação 2026-05-08: o scope `freemium_otp` foi removido
         # (sem endpoint OTP) e `freemium_pedido` (5/min) foi substituído

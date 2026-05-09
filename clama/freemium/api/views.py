@@ -651,6 +651,21 @@ class FreemiumConfirmarView(APIView):
             timeout=TEMP_PASSWORD_TTL_SECONDS,
         )
 
+        # G2.a — marca o momento em que o User consumiu o pedido grátis.
+        # Setado DENTRO do `transaction.atomic()` envolvente do `_handle_post`,
+        # ANTES do `confirmation_service.marcar_usado(token)` (que ocorre logo
+        # depois desta saga, no método chamador). Garante que o flag e o
+        # consumo do token compartilham a mesma transação — falha posterior
+        # (ex.: marcar_usado) rolla back ambos.
+        #
+        # P-12: NÃO sobrescreve `freemium_used_at` se já estiver setado.
+        # Preserva a semântica "primeira vez que consumiu" (consistente com
+        # o backfill da migration 0004). Cobre saga-replay + ainda permite
+        # que o tick inicial seja registrado em qualquer ordem.
+        if user.freemium_used_at is None:
+            user.freemium_used_at = timezone.now()
+            user.save(update_fields=["freemium_used_at"])
+
         # Vincula Pedido ao User e transita pra GERANDO_ORACAO.
         pedido.user = user
         pedido.status = PedidoStatus.GERANDO_ORACAO

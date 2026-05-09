@@ -5,7 +5,7 @@ Views da API de pedidos.
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.generics import CreateAPIView, RetrieveAPIView
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
@@ -17,14 +17,16 @@ from clama.orders.api.serializers import (
     PedidoStatusSerializer,
 )
 from clama.orders.models import Pedido
+from clama_backend.users.permissions import IsCustomerPasswordCurrent
 
 
 class PedidoCreateView(CreateAPIView):
     """
     Cria um novo pedido de oração.
 
-    Recebe os dados do pedido e retorna o ID para prosseguir ao pagamento.
-    Não requer autenticação.
+    Paywall (G2.a): exige Bearer JWT do customer. Anônimo recebe 401
+    pastoral. `Pedido.user` é setado a partir de `request.user` no
+    serializer (não vem do payload).
 
     Rate limiting:
     - 10 requests/minuto por IP (ScopedRateThrottle)
@@ -32,7 +34,7 @@ class PedidoCreateView(CreateAPIView):
     """
 
     serializer_class = PedidoCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsCustomerPasswordCurrent]
     throttle_classes = [ScopedRateThrottle, EmailScopedThrottle]
     throttle_scope = "pedidos_create"
 

@@ -1,7 +1,15 @@
 """
 Testes para o endpoint POST /api/pedidos/.
+
+G2.a paywall: o endpoint passou a exigir Bearer JWT customer
+(`IsAuthenticated + IsCustomerPasswordCurrent`). Os testes deste arquivo
+focam em validações/persistência/rate-limit do payload — autenticam via
+fixture `auth_client` que loga um customer válido e cola o Bearer no client.
+Cobertura específica do paywall (anônimo, spoof, etc.) está em
+`test_views_pedido_paywall.py`.
 """
 import pytest
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.urls import reverse
 from rest_framework import status
@@ -10,6 +18,8 @@ from rest_framework.test import APIClient
 from clama.orders.models import CanalEntrega, Pedido, PedidoStatus
 from clama.plans.models import Complexidade, Plan
 from clama.plans.tests.factories import PlanFactory
+
+User = get_user_model()
 
 
 @pytest.fixture(autouse=True)
@@ -21,9 +31,21 @@ def clear_cache():
 
 
 @pytest.fixture
-def api_client():
-    """API client para testes."""
-    return APIClient()
+def customer_user(db):
+    """Customer logável usado pelo `api_client` autenticado."""
+    return User.objects.create_user(
+        email="cliente@example.com",
+        password="SenhaForte!123",
+        nome_completo="Cliente Padrão",
+    )
+
+
+@pytest.fixture
+def api_client(customer_user):
+    """API client autenticado como customer (G2.a paywall)."""
+    client = APIClient()
+    client.force_authenticate(user=customer_user)
+    return client
 
 
 @pytest.fixture
@@ -295,21 +317,37 @@ class TestPedidoCreateValorLivre:
 class TestPedidoCreateRateLimit:
     """Testes de rate limiting para criação de pedidos."""
 
-    def test_rate_limit_blocks_after_limit(self, api_client, valid_pedido_data):
-        """11ª request deve ser bloqueada por rate limit."""
+    def test_rate_limit_blocks_after_limit(self, valid_pedido_data):
+        """6ª request deve ser bloqueada (EmailScopedThrottle 5/hour, P-2).
+
+        Pós-G2.a / P-2: o `EmailScopedThrottle` (5/hour) usa `request.user.email`
+        quando autenticado, então 6 POSTs com o mesmo customer estouram o
+        limite no 6º — BEFORE do `pedidos_create` (10/min) por user.
+        Confirmamos que o stack de throttles está ativo e que o limite mais
+        apertado (email/user) prevalece.
+
+        Pré-G2.a o teste validava o ScopedRateThrottle por IP em 10 reqs;
+        após o paywall + P-2 a primeira barreira é a do email-throttle.
+        """
+        # Cliente autenticado (mesma identity em todas as 6 requests).
+        client = APIClient()
+        user = User.objects.create_user(
+            email="cliente_throttle@example.com",
+            password="SenhaForte!#999",
+        )
+        client.force_authenticate(user=user)
+
         url = reverse("pedido-create")
 
-        # Fazer 11 requests - a 11ª deve ser bloqueada
-        for i in range(11):
-            response = api_client.post(url, valid_pedido_data, format="json")
-            if i < 10:
-                # Primeiras 10 devem passar
+        for i in range(6):
+            data = {**valid_pedido_data, "email": f"maria{i}@example.com"}
+            response = client.post(url, data, format="json")
+            if i < 5:
                 assert response.status_code in [
                     status.HTTP_201_CREATED,
                     status.HTTP_400_BAD_REQUEST,
                 ], f"Request {i+1} retornou {response.status_code} inesperado"
             else:
-                # 11ª deve ser bloqueada
                 assert (
                     response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
                 ), f"Request {i+1} deveria ser bloqueada, mas retornou {response.status_code}"
