@@ -21,6 +21,12 @@ env = environ.Env()
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#debug
 DEBUG = env.bool("DJANGO_DEBUG", False)
+# Flag explícita para detecção de contexto de teste (P-V3 wave 2).
+# `config/settings/test.py` sobrescreve para True. Usado pelos clientes
+# `TurnstileClient` e `InfosimplesClient` em vez da heurística frágil
+# "test in sys.argv | pytest in sys.modules" (que ativava mock_mode em
+# situações de produção: `--test-connection`, k8s probes, manifests test.yaml).
+TESTING = False
 # Local time zone. Choices are
 # http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
 TIME_ZONE = "America/Sao_Paulo"
@@ -84,6 +90,7 @@ LOCAL_APPS = [
     "clama.prayer_generation",
     "clama.notifications",
     "clama.documents",
+    "clama.freemium",
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -296,6 +303,25 @@ CELERY_TASK_TIME_LIMIT = 5 * 60
 CELERY_TASK_SOFT_TIME_LIMIT = 60
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#beat-scheduler
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+# P-V9 wave 2: agendamento de reconciliação de Pedidos freemium órfãos
+# (presos em AGUARDANDO_CONFIRMACAO_EMAIL por > 48h porque o e-mail de
+# confirmação não foi entregue). Roda a cada 6h. O scheduler do
+# django-celery-beat lê isso na primeira inicialização e cria
+# `PeriodicTask` no banco; runs subsequentes podem ser editados via admin.
+# Em ambientes onde `django_celery_beat` não estiver instalado/migrado, o
+# Celery cai no scheduler default em memória, que também consome esta
+# entrada.
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    "freemium-reconciliar-orfaos": {
+        "task": "clama.freemium.tasks.reconciliar_pedidos_freemium_orfaos",
+        # A cada 6h, no minuto 17 (offset arbitrário pra não colidir com
+        # outros beats potenciais). 24h também seria ok pelo padrão de
+        # uso atual; preferimos 6h pra detectar problema mais cedo.
+        "schedule": crontab(minute=17, hour="*/6"),
+    },
+}
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#worker-send-task-events
 CELERY_WORKER_SEND_TASK_EVENTS = True
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#std-setting-task_send_sent_event
@@ -317,6 +343,19 @@ REST_FRAMEWORK = {
         "pedidos_status": "60/min",
         "pedidos_checkout": "10/min",
         "admin_login": "5/min",
+        # Freemium (pedido gratuito) — limite anti-fraude por IP.
+        # Pós-renegociação 2026-05-08: o scope `freemium_otp` foi removido
+        # (sem endpoint OTP) e `freemium_pedido` (5/min) foi substituído
+        # por `freemium_pedido_ip` (5/h). Janela maior em vez de janela
+        # estreita — defesa anti-fraude IP-level reforçada que vai junto
+        # com CAPTCHA Turnstile + device fingerprint.
+        "freemium_pedido_ip": "5/hour",
+        # P-V13 wave 2: scope separado para `FreemiumConfirmarView`. Antes
+        # reusava `freemium_pedido_ip` (5/h), o que cauterizava o IP do
+        # usuário que tentava clicar várias vezes (mail scanner pre-fetch +
+        # clique humano + retry > 5). Confirmar é mais barato pro backend
+        # (sem Infosimples) — janela mais generosa.
+        "freemium_confirmar_ip": "30/hour",
     },
     "EXCEPTION_HANDLER": "clama.core.handlers.pastoral_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -376,6 +415,16 @@ ASAAS_MIN_VALOR_CENTAVOS = env.int("ASAAS_MIN_VALOR_CENTAVOS", default=500)
 # Frontend URL (for redirect callbacks)
 # -------------------------------------------------------------------------------
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+# Alias usado pelo fluxo freemium (rota `/oracao-gratis/confirmado` no front).
+# Usar a mesma origem se não foi customizado por env. Mantido como nome
+# separado para permitir apontar pra subdominio/preview específico no
+# futuro sem mexer no callback de pagamento.
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default=FRONTEND_URL)
+
+# Backend público — usado para montar links absolutos em e-mails (ex.: link
+# de confirmação freemium aponta para `BACKEND_PUBLIC_URL/api/freemium/confirmar/`).
+# Em local default aponta pro próprio backend Django.
+BACKEND_PUBLIC_URL = env("BACKEND_PUBLIC_URL", default="http://localhost:8000")
 
 # Anthropic (Claude API)
 # -------------------------------------------------------------------------------
@@ -399,3 +448,58 @@ DEFAULT_FROM_EMAIL = "Clama <oracao@clama.me>"
 
 # Admin alert email for ERRO notifications
 ADMIN_ALERT_EMAIL = env("ADMIN_ALERT_EMAIL", default="contato@clama.me")
+
+# Infosimples (consulta CPF/CNPJ na Receita Federal — fluxo freemium)
+# -------------------------------------------------------------------------------
+# https://api.infosimples.com/api/v2/consultas/receita-federal/
+# Em modo mock (token vazio), o cliente retorna ATIVO sem chamar a API.
+INFOSIMPLES_TOKEN = env("INFOSIMPLES_TOKEN", default="")
+INFOSIMPLES_BASE_URL = env(
+    "INFOSIMPLES_BASE_URL",
+    default="https://api.infosimples.com/api/v2/consultas/receita-federal",
+)
+
+# Freemium — flag para desabilitar despacho da task de geração em testes
+# que querem somente verificar a saga sem efeitos colaterais externos.
+FREEMIUM_DISPATCH_PRAYER_TASK = env.bool("FREEMIUM_DISPATCH_PRAYER_TASK", default=True)
+
+# Freemium — chave HMAC usada para hashear os identificadores na
+# `FreemiumBlacklist` (CPF, e-mail, telefone). Mantém os hashes determinísticos
+# (necessário para lookup) mas inviabiliza ataque de dicionário cego sobre o
+# banco. Em produção, defina `FREEMIUM_HASH_SECRET` via env como string aleatória
+# de 32+ bytes (`python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+# Rotacionar invalida todos os hashes existentes — fazer apenas em emergência.
+FREEMIUM_HASH_SECRET = env(
+    "FREEMIUM_HASH_SECRET",
+    default="dev-only-do-not-use-in-prod",
+)
+
+# Freemium — chave Fernet usada para criptografar a senha temporária do
+# usuário no cache (Redis) entre a criação da conta e o envio do e-mail. Não
+# precisa ser a mesma do `FIELD_ENCRYPTION_KEY`; idealmente é própria para
+# permitir rotação independente. Gerar com:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Em produção, definir via env. O default é uma chave fixa de dev/test —
+# se a chave não for válida, o decrypt cai num warning Sentry e o e-mail é
+# enviado sem o bloco de credenciais (mesmo fallback do "cache expirou").
+FREEMIUM_TEMP_PWD_KEY = env(
+    "FREEMIUM_TEMP_PWD_KEY",
+    default="xTEmld5LzkZz1xCiGvWLbeATZxQjTDx7z5SIRHRxbbg=",
+)
+
+# Cloudflare Turnstile (CAPTCHA invisível — anti-fraude do fluxo freemium)
+# -------------------------------------------------------------------------------
+# https://developers.cloudflare.com/turnstile/
+# Pós-renegociação 2026-05-08: Turnstile é a primeira camada anti-bot do
+# `/oracao-gratis` (antes do CPF / Infosimples / blacklist).
+# - SECRET_KEY: usada server-side em `TurnstileClient.validate`. Default vazio
+#   ativa o mock mode (dev/test). Em produção é obrigatório (P-1 anti-bypass:
+#   `ImproperlyConfigured` em start-up se não-DEBUG e não-test).
+# - SITE_KEY: pública, consumida pelo frontend (single-source-of-truth aqui).
+# - VERIFY_URL: pode ser sobrescrito em testes para apontar para um stub.
+TURNSTILE_SECRET_KEY = env("TURNSTILE_SECRET_KEY", default="")
+TURNSTILE_SITE_KEY = env("TURNSTILE_SITE_KEY", default="")
+TURNSTILE_VERIFY_URL = env(
+    "TURNSTILE_VERIFY_URL",
+    default="https://challenges.cloudflare.com/turnstile/v0/siteverify",
+)

@@ -1,0 +1,32 @@
+CLAMA.
+
+Paz e bem, {{ primeiro_nome }}.
+
+Sua oração foi escrita com carinho — que ela seja bálsamo nestes dias:
+
+{{ oracao }}
+
+---
+
+{% if login_email and senha_temporaria %}SUAS CREDENCIAIS DE ACESSO
+
+Guardamos um cantinho pra você no Clama. Suas credenciais ficam guardadas
+com você até que o login esteja disponível em breve.
+
+E-mail: {{ login_email }}
+Senha temporária: {{ senha_temporaria }}
+
+Anote em um lugar seguro — vamos abrir o login do Clama em breve.
+
+---
+
+{% endif %}"Perto está o Senhor dos que têm o coração quebrantado
+e salva os de espírito oprimido."
+— Salmo 34:18
+
+---
+
+clama.me
+
+Este email foi enviado com amor pelo Clama.
+Para contato: contato@clama.me

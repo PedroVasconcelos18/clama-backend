@@ -185,3 +185,41 @@ MSG_ERRO_DEFINITIVO = (
 MSG_TELEFONE_INVALIDO = (
     "Confira seu telefone com DDD — vamos enviar a oração por aqui."
 )
+
+
+# =============================================================================
+# FREEMIUM (pedido gratuito)
+# =============================================================================
+
+# CPF/CNPJ inativo na Receita ou inexistente (resposta da Infosimples)
+MSG_FREEMIUM_DOCUMENTO_INATIVO = (
+    "Não conseguimos confirmar este CPF/CNPJ. Verifique e tente de novo."
+)
+
+# Falha ao consultar Infosimples (timeout, 5xx após retries)
+MSG_FREEMIUM_INFOSIMPLES_INDISPONIVEL = (
+    "Não conseguimos confirmar seus dados agora. "
+    "Tenta de novo em um minutinho?"
+)
+
+# OTP inválido ou expirado (TTL passou ou código não bate)
+MSG_FREEMIUM_OTP_INVALIDO = (
+    "Código inválido ou expirado. Pede um novo código e tenta de novo."
+)
+
+# Rate limit do envio de OTP por telefone
+MSG_FREEMIUM_OTP_RATE_LIMIT = (
+    "Aguarde 1 minuto antes de pedir um novo código."
+)
+
+# Identificadores já usados (CPF/email/telefone na blacklist)
+MSG_FREEMIUM_BLACKLIST_HIT = (
+    "Você já recebeu sua oração gratuita. "
+    "Sempre que quiser, pode fazer um novo pedido pela página principal."
+)
+
+# E-mail descartável detectado
+MSG_FREEMIUM_EMAIL_DESCARTAVEL = (
+    "Use um e-mail principal para receber sua oração — "
+    "e-mails temporários não funcionam aqui."
+)

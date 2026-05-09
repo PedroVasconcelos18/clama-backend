@@ -12,6 +12,7 @@ class Complexidade(models.TextChoices):
     SIMPLES = "simples", "Simples"
     COM_VERSICULO = "com_versiculo", "Com versículo"
     COM_PROFECIA_E_VERSICULOS = "com_profecia_e_versiculos", "Com profecia e versículos"
+    SIMPLES_GRATUITA = "simples_gratuita", "Simples Gratuita"
 
 
 class PlanManager(models.Manager):
@@ -21,22 +22,29 @@ class PlanManager(models.Manager):
         """
         Infere o plano ativo apropriado para um dado valor em centavos.
 
-        Regra "par abaixo": retorna o plano ativo de maior `valor_centavos`
-        cujo valor seja menor ou igual ao informado. Se nenhum plano ativo
-        bater (ex.: valor abaixo do menor plano — caso o serializer já valida
-        antes), retorna o menor plano ativo como fallback.
+        Regra "par abaixo": retorna o plano ativo (e visível) de maior
+        `valor_centavos` cujo valor seja menor ou igual ao informado.
+        Se nenhum plano ativo bater (ex.: valor abaixo do menor plano —
+        caso o serializer já valida antes), retorna o menor plano ativo
+        e visível como fallback.
+
+        Planos invisíveis (ex.: plano "Gratuito" do fluxo freemium) NÃO
+        entram nesse "infer" — eles só são selecionados explicitamente
+        pelo seu fluxo dedicado.
 
         Returns:
-            Plan inferido ou None se não houver planos ativos.
+            Plan inferido ou None se não houver planos ativos visíveis.
         """
         abaixo = (
-            self.filter(ativo=True, valor_centavos__lte=valor_centavos)
+            self.filter(ativo=True, visivel=True, valor_centavos__lte=valor_centavos)
             .order_by("-valor_centavos")
             .first()
         )
         if abaixo is not None:
             return abaixo
-        return self.filter(ativo=True).order_by("valor_centavos").first()
+        return (
+            self.filter(ativo=True, visivel=True).order_by("valor_centavos").first()
+        )
 
 
 class Plan(UUIDPKModel, TimestampedModel):
@@ -56,6 +64,14 @@ class Plan(UUIDPKModel, TimestampedModel):
     )
     ordem = models.PositiveSmallIntegerField(default=1)
     ativo = models.BooleanField(default=True)
+    visivel = models.BooleanField(
+        default=True,
+        help_text=(
+            "Indica se o plano aparece para o usuário final (LP, formulário). "
+            "Planos invisíveis (ex.: Gratuito do freemium) só são usados via "
+            "fluxos dedicados."
+        ),
+    )
 
     objects = PlanManager()
 

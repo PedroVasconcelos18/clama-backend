@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from encrypted_model_fields.fields import EncryptedCharField
 
 
 class UserManager(BaseUserManager):
@@ -73,6 +74,28 @@ class User(AbstractUser):
         "Admin do Clama",
         default=False,
         help_text="Designa se o usuário pode acessar o painel admin do Clama.",
+    )
+
+    # Dados pessoais para fluxo freemium / customer (criptografados, LGPD)
+    cpf_cnpj = EncryptedCharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        verbose_name="CPF/CNPJ",
+    )
+    telefone = EncryptedCharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        verbose_name="Telefone",
+    )
+
+    # Sinaliza que o usuário precisa trocar a senha temporária no próximo login.
+    # Usado pelo fluxo freemium ao criar conta com senha gerada automaticamente.
+    force_change_password = models.BooleanField(
+        "Forçar troca de senha",
+        default=False,
+        help_text="Indica que o usuário deve trocar a senha no próximo login.",
     )
 
     objects = UserManager()

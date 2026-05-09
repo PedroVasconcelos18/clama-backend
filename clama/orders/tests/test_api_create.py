@@ -51,6 +51,8 @@ def valid_pedido_data(plano_ativo):
         "plano": str(plano_ativo.id),
         "valor_centavos": 2000,
         "canal_entrega": CanalEntrega.EMAIL,
+        "cpf_cnpj": "11144477735",
+        "consent_aceito": True,
     }
 
 

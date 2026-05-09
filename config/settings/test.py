@@ -14,6 +14,10 @@ SECRET_KEY = env(
 # https://docs.djangoproject.com/en/dev/ref/settings/#test-runner
 TEST_RUNNER = "django.test.runner.DiscoverRunner"
 
+# Sinaliza explicitamente o contexto de teste (P-V3 wave 2). Substitui a
+# heurística frágil em `_is_testing` dos clientes Turnstile/Infosimples.
+TESTING = True
+
 # PASSWORDS
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#password-hashers
@@ -35,3 +39,20 @@ TEMPLATES[0]["OPTIONS"]["debug"] = True  # type: ignore[index] # noqa: F405
 # ------------------------------------------------------------------------------
 # Desabilita throttling em testes para não atrapalhar a suíte
 REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []  # type: ignore[name-defined] # noqa: F405
+
+# CACHE
+# ------------------------------------------------------------------------------
+# Cache local em memória para testes (em produção: Redis).
+CACHES = {  # noqa: F405
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "clama-tests",
+    }
+}
+
+# CELERY
+# ------------------------------------------------------------------------------
+# Em testes, executa tasks no thread atual (síncrono) — facilita asserts
+# sobre side-effects sem precisar de worker rodando.
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True

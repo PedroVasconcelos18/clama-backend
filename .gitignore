@@ -113,3 +113,7 @@ venv.bak/
 # OS
 .DS_Store
 Thumbs.db
+
+# SQLite test/local databases
+*.db
+*.sqlite3

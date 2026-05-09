@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sua oração, {{ primeiro_nome }}</title>
+</head>
+<body style="margin:0; padding:0; background:#1a0a2e; font-family:Georgia, 'Times New Roman', serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#1a0a2e;">
+    <tr>
+      <td align="center" style="padding:48px 24px;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="max-width:600px; background:#1a0a2e;">
+          <!-- Header -->
+          <tr>
+            <td align="center" style="padding-bottom:32px;">
+              <h1 style="font-family:Georgia, 'Times New Roman', serif; font-size:48px; color:#f0c040; margin:0; letter-spacing:-1px;">
+                Clama<span style="color:#fdf8f0;">.</span>
+              </h1>
+            </td>
+          </tr>
+
+          <!-- Saudação -->
+          <tr>
+            <td style="color:#fdf8f0; font-size:18px; line-height:1.7; padding:0 24px;">
+              <p style="margin:0 0 16px 0;">Paz e bem, {{ primeiro_nome }}.</p>
+              <p style="margin:0 0 24px 0;">Sua oração foi escrita com carinho — que ela seja bálsamo nestes dias:</p>
+            </td>
+          </tr>
+
+          <!-- Oração -->
+          <tr>
+            <td style="color:#fdf8f0; font-size:18px; line-height:1.8; padding:0 24px 32px 24px;">
+              <div style="white-space:pre-wrap; font-family:Georgia, 'Times New Roman', serif;">{{ oracao }}</div>
+            </td>
+          </tr>
+
+          <!-- Divider dourado -->
+          <tr>
+            <td style="padding:0 24px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="border-top:1px solid #f0c040; padding-top:32px;"></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Bloco de Credenciais (exclusivo do fluxo freemium) -->
+          {% if login_email and senha_temporaria %}
+          <tr>
+            <td style="padding:0 24px 32px 24px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:rgba(240, 192, 64, 0.08); border:1px solid rgba(240, 192, 64, 0.3); border-radius:12px;">
+                <tr>
+                  <td style="padding:24px;">
+                    <p style="color:#f0c040; font-family:Arial, sans-serif; font-size:14px; font-weight:600; margin:0 0 12px 0; text-transform:uppercase; letter-spacing:1px;">
+                      Suas credenciais de acesso
+                    </p>
+                    <p style="color:#fdf8f0; font-family:Arial, sans-serif; font-size:15px; line-height:1.6; margin:0 0 16px 0;">
+                      Guardamos um cantinho pra você no Clama. Suas credenciais ficam guardadas com você até que o login esteja disponível em breve.
+                    </p>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-family:'Courier New', monospace;">
+                      <tr>
+                        <td style="color:#f0c040; font-size:13px; padding:6px 0;">E-mail:</td>
+                        <td style="color:#fdf8f0; font-size:14px; padding:6px 0; text-align:right; word-break:break-all;">
+                          {{ login_email }}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="color:#f0c040; font-size:13px; padding:6px 0;">Senha temporária:</td>
+                        <td style="color:#fdf8f0; font-size:14px; padding:6px 0; text-align:right; word-break:break-all;">
+                          {{ senha_temporaria }}
+                        </td>
+                      </tr>
+                    </table>
+                    <p style="color:rgba(253, 248, 240, 0.7); font-family:Arial, sans-serif; font-size:12px; line-height:1.5; margin:16px 0 0 0;">
+                      Anote em um lugar seguro — vamos abrir o login do Clama em breve.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+
+          <!-- Versículo de rodapé -->
+          <tr>
+            <td align="center" style="padding:0 24px 32px 24px;">
+              <em style="color:#f0c040; font-size:14px; font-style:italic; display:block; line-height:1.6;">
+                "Perto está o Senhor dos que têm o coração quebrantado<br>
+                e salva os de espírito oprimido."
+              </em>
+              <span style="color:#fdf8f0; font-size:12px; opacity:0.8; display:block; margin-top:8px;">
+                — Salmo 34:18
+              </span>
+            </td>
+          </tr>
+
+          <!-- Link para o site -->
+          <tr>
+            <td align="center" style="padding:24px;">
+              <a href="https://clama.me" style="color:#f0c040; text-decoration:none; font-size:14px; font-family:Arial, sans-serif;">
+                clama.me
+              </a>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding:24px; border-top:1px solid rgba(240, 192, 64, 0.2);">
+              <p style="color:#fdf8f0; opacity:0.6; font-size:12px; font-family:Arial, sans-serif; margin:0; line-height:1.5;">
+                Este email foi enviado com amor pelo Clama.<br>
+                Não responda a este email — para contato, use contato@clama.me
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
