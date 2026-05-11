@@ -41,7 +41,7 @@ from rest_framework import status as drf_status
 from rest_framework.test import APIClient
 
 from clama.freemium.api.views import TEMP_PASSWORD_CACHE_PREFIX
-from clama.freemium.hashing import hash_cpf_cnpj, hash_email
+from clama.freemium.hashing import hash_cpf_cnpj, hash_email, hash_telefone
 from clama.freemium.models import (
     FreemiumBlacklist,
     FreemiumConfirmationToken,
@@ -123,9 +123,9 @@ class TestConfirmarGet:
             HTTP_ACCEPT="text/html,application/xhtml+xml",
         )
         assert response.status_code == drf_status.HTTP_302_FOUND
-        # Aponta pra `/oracao-gratis/confirmar` (página intermediária),
-        # NÃO `/oracao-gratis/confirmado` (página de sucesso).
-        assert "/oracao-gratis/confirmar" in response.url
+        # Aponta pra `/confirmar` (página intermediária),
+        # NÃO `/confirmado` (página de sucesso).
+        assert "/confirmar" in response.url
         assert f"token={token}" in response.url
 
         # Token NÃO foi consumido.
@@ -143,7 +143,7 @@ class TestConfirmarGet:
     ):
         response = api_client.get(url_confirmar)
         assert response.status_code == drf_status.HTTP_302_FOUND
-        assert "/oracao-gratis/confirmar" in response.url
+        assert "/confirmar" in response.url
         assert "token=" not in response.url
 
     def test_get_aplica_security_headers(
@@ -343,6 +343,36 @@ class TestConfirmarSaga:
         pedido.refresh_from_db()
         assert pedido.status == PedidoStatus.GERANDO_ORACAO
         mock_task.assert_called_once_with(str(pedido.id))
+
+    def test_saga_seta_freemium_used_at_no_user_criado(
+        self, api_client, url_confirmar, pedido_e_token
+    ):
+        """Spec lp-user-existence-gate (2026-05-10)."""
+        _, token = pedido_e_token
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            response = api_client.post(
+                url_confirmar, {"token": token}, format="json"
+            )
+        assert response.status_code == drf_status.HTTP_200_OK
+        user = User.objects.get(email=EMAIL_OK)
+        assert user.freemium_used_at is not None
+
+    def test_saga_grava_telefone_hash_na_blacklist(
+        self, api_client, url_confirmar, pedido_e_token
+    ):
+        """telefone_hash re-adicionado em 2026-05-10."""
+        _, token = pedido_e_token
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            response = api_client.post(
+                url_confirmar, {"token": token}, format="json"
+            )
+        assert response.status_code == drf_status.HTTP_200_OK
+        entry = FreemiumBlacklist.objects.get(
+            cpf_hash=hash_cpf_cnpj(CPF_VALIDO)
+        )
+        assert entry.telefone_hash == hash_telefone(TELEFONE_OK)
 
 
 @pytest.mark.django_db

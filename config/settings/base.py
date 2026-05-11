@@ -22,8 +22,8 @@ env = environ.Env()
 # https://docs.djangoproject.com/en/dev/ref/settings/#debug
 DEBUG = env.bool("DJANGO_DEBUG", False)
 # Flag explícita para detecção de contexto de teste (P-V3 wave 2).
-# `config/settings/test.py` sobrescreve para True. Usado pelos clientes
-# `TurnstileClient` e `InfosimplesClient` em vez da heurística frágil
+# `config/settings/test.py` sobrescreve para True. Usado pelo
+# `TurnstileClient` em vez da heurística frágil
 # "test in sys.argv | pytest in sys.modules" (que ativava mock_mode em
 # situações de produção: `--test-connection`, k8s probes, manifests test.yaml).
 TESTING = False
@@ -76,9 +76,9 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
-    # `token_blacklist` registra refresh tokens revogados/rotacionados. Sem ele,
-    # `BLACKLIST_AFTER_ROTATION=True` em SIMPLE_JWT é inerte e o logout customer
-    # não consegue revogar refresh tokens (G2.a — paywall + logout).
+    # Necessário para `BLACKLIST_AFTER_ROTATION=True` ter efeito real e
+    # para o `POST /api/customer/auth/logout/` revogar refresh tokens.
+    # Sem este app + migrations rodadas, logout vira no-op silencioso.
     "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
     "corsheaders",
@@ -95,6 +95,7 @@ LOCAL_APPS = [
     "clama.notifications",
     "clama.documents",
     "clama.freemium",
+    "clama.customers",
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -347,9 +348,6 @@ REST_FRAMEWORK = {
         "pedidos_status": "60/min",
         "pedidos_checkout": "10/min",
         "admin_login": "5/min",
-        # Customer auth (G2.a) — login por IP e change-password por usuário.
-        "customer_login": "5/min",
-        "customer_change_password": "10/hour",
         # Freemium (pedido gratuito) — limite anti-fraude por IP.
         # Pós-renegociação 2026-05-08: o scope `freemium_otp` foi removido
         # (sem endpoint OTP) e `freemium_pedido` (5/min) foi substituído
@@ -360,9 +358,14 @@ REST_FRAMEWORK = {
         # P-V13 wave 2: scope separado para `FreemiumConfirmarView`. Antes
         # reusava `freemium_pedido_ip` (5/h), o que cauterizava o IP do
         # usuário que tentava clicar várias vezes (mail scanner pre-fetch +
-        # clique humano + retry > 5). Confirmar é mais barato pro backend
-        # (sem Infosimples) — janela mais generosa.
+        # clique humano + retry > 5). Confirmar é mais barato — janela mais
+        # generosa.
         "freemium_confirmar_ip": "30/hour",
+        # Customer auth (G2.a backend, spec lp-user-existence-gate). Login
+        # por IP (anti brute-force credenciais), change-password por user
+        # (anti spray pós-takeover de sessão).
+        "customer_login": "5/min",
+        "customer_change_password": "10/hour",
     },
     "EXCEPTION_HANDLER": "clama.core.handlers.pastoral_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -422,7 +425,7 @@ ASAAS_MIN_VALOR_CENTAVOS = env.int("ASAAS_MIN_VALOR_CENTAVOS", default=500)
 # Frontend URL (for redirect callbacks)
 # -------------------------------------------------------------------------------
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
-# Alias usado pelo fluxo freemium (rota `/oracao-gratis/confirmado` no front).
+# Alias usado pelo fluxo freemium (rota `/confirmado` no front).
 # Usar a mesma origem se não foi customizado por env. Mantido como nome
 # separado para permitir apontar pra subdominio/preview específico no
 # futuro sem mexer no callback de pagamento.
@@ -456,16 +459,6 @@ DEFAULT_FROM_EMAIL = "Clama <oracao@clama.me>"
 # Admin alert email for ERRO notifications
 ADMIN_ALERT_EMAIL = env("ADMIN_ALERT_EMAIL", default="contato@clama.me")
 
-# Infosimples (consulta CPF/CNPJ na Receita Federal — fluxo freemium)
-# -------------------------------------------------------------------------------
-# https://api.infosimples.com/api/v2/consultas/receita-federal/
-# Em modo mock (token vazio), o cliente retorna ATIVO sem chamar a API.
-INFOSIMPLES_TOKEN = env("INFOSIMPLES_TOKEN", default="")
-INFOSIMPLES_BASE_URL = env(
-    "INFOSIMPLES_BASE_URL",
-    default="https://api.infosimples.com/api/v2/consultas/receita-federal",
-)
-
 # Freemium — flag para desabilitar despacho da task de geração em testes
 # que querem somente verificar a saga sem efeitos colaterais externos.
 FREEMIUM_DISPATCH_PRAYER_TASK = env.bool("FREEMIUM_DISPATCH_PRAYER_TASK", default=True)
@@ -494,11 +487,39 @@ FREEMIUM_TEMP_PWD_KEY = env(
     default="xTEmld5LzkZz1xCiGvWLbeATZxQjTDx7z5SIRHRxbbg=",
 )
 
+# Anti-bypass por IP na FreemiumBlacklist — opção D (threshold de
+# confirmações).
+#
+# A blacklist guarda 1 entry por confirmação. O check no submit conta
+# quantas entries do mesmo IP existem dentro da `WINDOW_HOURS`. Bloqueia
+# apenas se >= `THRESHOLD` (sinal forte de abuso). Permite uso legítimo
+# em rede compartilhada (biblioteca, CGNAT móvel, escola, café) — até o
+# THRESHOLD as primeiras pessoas conseguem.
+#
+# Atacante humano: cada confirmação exige clicar no link de email único,
+# então acumular 3 confirmações no mesmo IP em 1h é um esforço grande
+# (precisa de 3 mailboxes distintas). Atacante automatizado é parado
+# antes pelo throttle de submissão (`freemium_pedido_ip=5/h`) +
+# Turnstile + device_hash.
+#
+# Calibragem default conservadora (threshold=3 / window=1h):
+#  - Biblioteca de 10 pessoas: 2 conseguem; 8 frustradas. Trade-off
+#    explícito; admin pode aumentar threshold via env se virar dor.
+#  - Atacante: 3+ confirmações sequenciais do mesmo IP/h bloqueia.
+FREEMIUM_IP_BLACKLIST_WINDOW_HOURS = env.int(
+    "FREEMIUM_IP_BLACKLIST_WINDOW_HOURS",
+    default=1,
+)
+FREEMIUM_IP_BLACKLIST_THRESHOLD = env.int(
+    "FREEMIUM_IP_BLACKLIST_THRESHOLD",
+    default=3,
+)
+
 # Cloudflare Turnstile (CAPTCHA invisível — anti-fraude do fluxo freemium)
 # -------------------------------------------------------------------------------
 # https://developers.cloudflare.com/turnstile/
 # Pós-renegociação 2026-05-08: Turnstile é a primeira camada anti-bot do
-# `/oracao-gratis` (antes do CPF / Infosimples / blacklist).
+# Landing pública (antes do CPF / blacklist).
 # - SECRET_KEY: usada server-side em `TurnstileClient.validate`. Default vazio
 #   ativa o mock mode (dev/test). Em produção é obrigatório (P-1 anti-bypass:
 #   `ImproperlyConfigured` em start-up se não-DEBUG e não-test).

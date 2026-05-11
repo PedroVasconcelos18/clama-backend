@@ -31,16 +31,17 @@ def pastoral_exception_handler(exc, context):
     """
     if isinstance(exc, ClamaBaseException):
         status = getattr(exc, "status_code", 400)
-        return Response(
-            {
-                "error": {
-                    "code": exc.code,
-                    "message": exc.message,
-                    "pastoral_message": exc.pastoral_message,
-                }
-            },
-            status=status,
-        )
+        error_body = {
+            "code": exc.code,
+            "message": exc.message,
+            "pastoral_message": exc.pastoral_message,
+        }
+        # Merge campos extras (ex.: `redirect`) sem permitir override dos
+        # campos canônicos — defesa contra collision acidental.
+        for k, v in (getattr(exc, "extra", None) or {}).items():
+            if k not in error_body:
+                error_body[k] = v
+        return Response({"error": error_body}, status=status)
 
     # Rate limiting (429 Throttled)
     if isinstance(exc, Throttled):

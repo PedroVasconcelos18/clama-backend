@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
 from clama.core.exceptions import PastoralAPIException
+from clama.core.permissions import IsCustomerPasswordCurrent
 from clama.core.throttles import EmailScopedThrottle
 from clama.orders.api.serializers import (
     PedidoCreateSerializer,
@@ -17,16 +18,17 @@ from clama.orders.api.serializers import (
     PedidoStatusSerializer,
 )
 from clama.orders.models import Pedido
-from clama_backend.users.permissions import IsCustomerPasswordCurrent
 
 
 class PedidoCreateView(CreateAPIView):
     """
-    Cria um novo pedido de oração.
+    Cria um novo pedido de oração (fluxo pago, autenticado).
 
-    Paywall (G2.a): exige Bearer JWT do customer. Anônimo recebe 401
-    pastoral. `Pedido.user` é setado a partir de `request.user` no
-    serializer (não vem do payload).
+    Spec G2.a backend (entregue via spec lp-user-existence-gate em
+    2026-05-10): exige `IsAuthenticated` + `IsCustomerPasswordCurrent`. O
+    user precisa ter conta (criada via saga G1 freemium ou G4 futuro) e
+    ter trocado a senha temporária. O `Pedido.user` é setado a partir do
+    `request.user` no serializer.
 
     Rate limiting:
     - 10 requests/minuto por IP (ScopedRateThrottle)

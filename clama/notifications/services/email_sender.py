@@ -3,8 +3,8 @@ Serviço de envio de email com oração.
 
 P-V14 wave 2: as funções de envio do fluxo freemium (`enviar_email_confirmacao_freemium`
 e `enviar_oracao_email_freemium`) estão decoradas com `@with_retry` para
-cumprir literalmente o frozen "Always" — `@with_retry` em Infosimples +
-Resend + Turnstile. A camada de retry da task Celery (`max_retries=3,
+cumprir literalmente o frozen "Always" — `@with_retry` em Resend +
+Turnstile. A camada de retry da task Celery (`max_retries=3,
 default_retry_delay=30`) permanece como fallback final pra falhas que
 escapem das 3 tentativas internas (ex.: container reciclado mid-retry).
 """
@@ -118,12 +118,23 @@ def enviar_oracao_email_freemium(
     """
     primeiro_nome = pedido.nome.split()[0] if pedido.nome else "Amada"
 
+    # URL absoluta do login customer — usada no bloco de credenciais
+    # quando senha temp foi incluída. Frontend ressalva pasterol no flash
+    # após login (force_change_password=True → /trocar-senha).
+    frontend_base = (
+        getattr(settings, "FRONTEND_BASE_URL", "")
+        or getattr(settings, "FRONTEND_URL", "")
+        or "http://localhost:5173"
+    ).rstrip("/")
+    login_url = f"{frontend_base}/login"
+
     context = {
         "pedido": pedido,
         "primeiro_nome": primeiro_nome,
         "oracao": pedido.oracao_gerada,
         "login_email": login_email or "",
         "senha_temporaria": senha_temporaria or "",
+        "login_url": login_url,
     }
 
     body_html = render_to_string("email/oracao_freemium.html", context)

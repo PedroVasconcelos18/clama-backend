@@ -98,3 +98,28 @@ def hash_email(email: str) -> str:
 def hash_telefone(telefone: str) -> str:
     """Normaliza e hasheia telefone."""
     return _hash(normalizar_telefone(telefone))
+
+
+def normalizar_ip(ip: str) -> str:
+    """
+    Normaliza endereço IP para hashing.
+
+    IPv4: trim. IPv6: lowercase + trim. Não fazemos canonicalização agressiva
+    (ex.: expand `::` para 0000:0000:...) — simples lowercase cobre os casos
+    comuns. Lookup falha-fechado: se o IP veio em forma incomum, não bate
+    com a blacklist (atacante consegue contornar mudando representação).
+    Pra MVP é aceitável.
+    """
+    return (ip or "").strip().lower()
+
+
+def hash_ip(ip: str) -> str:
+    """
+    HMAC-SHA-256 do IP normalizado. Não armazenamos IP em claro na blacklist
+    pra reduzir superfície LGPD (IP é dado pessoal). Pedido.consent_ip
+    mantém o cleartext pra fins forenses, mas a blacklist só usa hash.
+
+    String vazia (`""`) ainda gera hash determinístico — chamadas com IP
+    ausente nunca devem chegar até aqui (view skip).
+    """
+    return _hash(normalizar_ip(ip))

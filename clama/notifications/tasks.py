@@ -363,7 +363,7 @@ def enviar_email_confirmacao_freemium_task(
         or "http://localhost:5173"
     ).rstrip("/")
     link_confirmacao = (
-        f"{frontend_base}/oracao-gratis/confirmar?token={token}"
+        f"{frontend_base}/confirmar?token={token}"
     )
 
     try:

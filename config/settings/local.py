@@ -26,10 +26,19 @@ ALLOWED_HOSTS = [
 # CACHES
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#caches
+#
+# Usamos Redis (compartilhado entre processos) em dev — necessário para que
+# o cache da senha temporária do freemium, populado pela view no processo
+# Django, seja visível pela task do Celery worker (processo separado).
+# Com `LocMemCache`, cada processo tinha sua RAM isolada → cache miss
+# silencioso no worker → e-mail enviado sem bloco de credenciais.
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "",
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        # DB 1 separa keys do cache das keys do Celery broker (DB 0). Sem
+        # essa separação, `cache.clear()` em testes ou um `FLUSHDB` mata
+        # também os jobs em fila.
+        "LOCATION": env("REDIS_CACHE_URL", default="redis://redis:6379/1"),
     },
 }
 

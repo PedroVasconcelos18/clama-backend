@@ -4,7 +4,6 @@ Serializers para a API de pedidos.
 
 from django.utils import timezone
 from rest_framework import serializers
-from rest_framework.exceptions import PermissionDenied
 
 from clama.core.legal import POLITICA_VERSAO_ATUAL
 from clama.core.pastoral_messages import MSG_ERRO_CREDITOS_24H
@@ -162,7 +161,7 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Cria o pedido com campos de consentimento LGPD."""
+        """Cria o pedido com campos de consentimento LGPD + vínculo com user."""
         # Remove consent_aceito do validated_data (será setado manualmente)
         consent_aceito = validated_data.pop("consent_aceito", False)
 
@@ -182,25 +181,11 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         validated_data["consent_aceito_at"] = timezone.now()
         validated_data["consent_ip"] = consent_ip
 
-        # G2.a — paywall: vincula o Pedido ao customer logado.
-        # `IsAuthenticated` na view garante que `request.user` é não-anonimo.
-        # P-13 (defesa em profundidade): se o serializer for chamado FORA
-        # do fluxo HTTP (admin/shell/management command) ou se a view for
-        # reconfigurada por engano com permission permissiva, exigimos
-        # explicitamente um usuário autenticado. Falha alta e ruidosa em
-        # vez de criar Pedido órfão silenciosamente.
-        user = getattr(request, "user", None) if request is not None else None
-        if user is None or not getattr(user, "is_authenticated", False):
-            raise PermissionDenied(
-                {
-                    "error": {
-                        "code": "not_authenticated",
-                        "message": "Authenticated customer required to create Pedido",
-                        "pastoral_message": "Faça login pra continuar.",
-                    }
-                }
-            )
-        validated_data["user"] = user
+        # Spec lp-user-existence-gate (2026-05-10): vincula Pedido ao User
+        # autenticado. PedidoCreateView usa IsAuthenticated, então
+        # request.user nunca é AnonymousUser aqui.
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            validated_data["user"] = request.user
 
         return super().create(validated_data)
 

@@ -98,15 +98,42 @@ class User(AbstractUser):
         help_text="Indica que o usuário deve trocar a senha no próximo login.",
     )
 
-    # Marca o momento em que o usuário consumiu o pedido grátis (saga freemium).
-    # Setado dentro da `transaction.atomic()` da `FreemiumConfirmarView._executar_saga`
-    # antes do `marcar_usado` do token. Indexado para permitir queries
-    # analíticas e segmentação anti-fraude futura.
+    # Hashes determinísticos (HMAC-SHA-256 via FREEMIUM_HASH_SECRET) para
+    # lookup do user-existence gate da Landing Page sem expor cleartext nem
+    # depender de filter direto sobre EncryptedCharField (que não suporta).
+    # Mantidos em sync via pre_save signal — bulk_create não dispara signals
+    # e exige set manual.
+    email_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        verbose_name="Hash do e-mail",
+        help_text="HMAC-SHA-256 do e-mail normalizado (Gmail canonical).",
+    )
+    cpf_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        null=True,
+        blank=True,
+        verbose_name="Hash do CPF/CNPJ",
+        help_text="HMAC-SHA-256 do CPF/CNPJ (somente dígitos).",
+    )
+    telefone_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        null=True,
+        blank=True,
+        verbose_name="Hash do telefone",
+        help_text="HMAC-SHA-256 do telefone (somente dígitos).",
+    )
+
+    # Marca o instante em que o usuário consumiu o pedido gratuito (saga G1).
+    # Setado dentro de FreemiumConfirmarView._executar_saga ANTES do
+    # marcar_usado do token. Indexed pra eventuais queries analíticas.
     freemium_used_at = models.DateTimeField(
-        "Usou freemium em",
         null=True,
         blank=True,
         db_index=True,
+        verbose_name="Pedido gratuito consumido em",
     )
 
     objects = UserManager()

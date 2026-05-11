@@ -1,9 +1,9 @@
 """
 Cliente para o Cloudflare Turnstile — verificação anti-robô (CAPTCHA invisível).
 
-Usado pelo fluxo freemium pós-renegociação 2026-05-08 como primeira camada
-de defesa contra bots. Antes de qualquer chamada externa (Infosimples) ou
-escrita no banco, a view valida o token Turnstile que o frontend coletou.
+Usado pelo fluxo freemium como primeira camada de defesa contra bots. Antes
+de qualquer escrita no banco, a view valida o token Turnstile que o
+frontend coletou.
 
 Endpoint Cloudflare: POST `https://challenges.cloudflare.com/turnstile/v0/siteverify`
 - Form-encoded: `secret`, `response`, `remoteip` (opcional).
@@ -11,8 +11,7 @@ Endpoint Cloudflare: POST `https://challenges.cloudflare.com/turnstile/v0/siteve
 
 Mock mode: se `TURNSTILE_SECRET_KEY` estiver vazio (default em dev/test), o
 cliente aceita qualquer token não-vazio. Em produção (não-DEBUG e não-test),
-levanta `ImproperlyConfigured` — mesmo padrão do `infosimples_client.py`
-(P-1 do v1).
+levanta `ImproperlyConfigured`.
 
 Logging estruturado, sem PII.
 """
