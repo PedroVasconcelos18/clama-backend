@@ -19,11 +19,10 @@ Pipeline anti-fraude da submissão (ordem):
   2. Deserializa request (algoritmo CPF/CNPJ + E.164 telefone vêm do serializer).
   3. CAPTCHA Cloudflare Turnstile (mock em dev/test).
   4. Disposable e-mail check.
-  5. Infosimples (status ATIVO).
-  6. Cancela pedidos AGUARDANDO_CONFIRMACAO_EMAIL anteriores do mesmo CPF
+  5. Cancela pedidos AGUARDANDO_CONFIRMACAO_EMAIL anteriores do mesmo CPF
      (P-V10 wave 2 — semântica "último submit ganha").
-  7. Blacklist check (CPF + email — telefone ficou fora pós-renegociação).
-  8. Atomic create do Pedido + token de confirmação + on_commit task de e-mail.
+  6. Blacklist check (CPF + email — telefone ficou fora pós-renegociação).
+  7. Atomic create do Pedido + token de confirmação + on_commit task de e-mail.
 
 Hardening wave 2 (15 patches): vide spec change log
 `docs/implementation-artifacts/spec-freemium-pedido-gratuito.md` seção
@@ -61,24 +60,21 @@ from clama.freemium.exceptions import (
     BlacklistHitError,
     ConfirmationTokenExpiradoError,
     ConfirmationTokenInvalidoError,
-    DocumentoInativoError,
     EmailDescartavelError,
-    InfosimplesError,
-    InfosimplesIndisponivelError,
+    PedidoEmAndamentoError,
     TurnstileInvalidoError,
+    UserJaPossuiContaError,
 )
 from clama.freemium.hashing import (
     hash_cpf_cnpj,
     hash_email,
+    hash_ip,
+    hash_telefone,
     normalizar_email,
 )
 from clama.freemium.models import FreemiumBlacklist, FreemiumConfirmationToken
 from clama.freemium.services import confirmation_service
 from clama.freemium.services.email_blacklist import is_disposable
-from clama.freemium.services.infosimples_client import (
-    STATUS_ATIVO,
-    InfosimplesClient,
-)
 from clama.freemium.services.turnstile_client import TurnstileClient
 from clama.freemium.temp_password import encriptar_senha_para_cache
 from clama.orders.models import CanalEntrega, Pedido, PedidoStatus
@@ -196,11 +192,10 @@ class PedidoFreemiumCreateView(APIView):
       2. Deserializa payload (Turnstile token, device_hash opcional, consent etc).
       3. Valida CAPTCHA Turnstile (PRIMEIRO, antes de qualquer chamada externa).
       4. Disposable e-mail check.
-      5. Infosimples — CPF/CNPJ ATIVO.
-      6. Cancela pedidos AGUARDANDO_CONFIRMACAO_EMAIL anteriores do mesmo
+      5. Cancela pedidos AGUARDANDO_CONFIRMACAO_EMAIL anteriores do mesmo
          CPF (P-V10 — "último submit ganha", evita acúmulo de N órfãos).
-      7. Blacklist check (CPF/email).
-      8. Atomic create do Pedido em AGUARDANDO_CONFIRMACAO_EMAIL + token
+      6. Blacklist check (CPF/email).
+      7. Atomic create do Pedido em AGUARDANDO_CONFIRMACAO_EMAIL + token
          de confirmação + on_commit dispara `enviar_email_confirmacao_freemium_task`.
     """
 
@@ -215,11 +210,10 @@ class PedidoFreemiumCreateView(APIView):
         responses={
             201: OpenApiResponse(response=PedidoFreemiumCreateResponseSerializer),
             400: OpenApiResponse(
-                description="CAPTCHA inválido / e-mail descartável / dados inválidos / CPF inativo"
+                description="CAPTCHA inválido / e-mail descartável / dados inválidos"
             ),
             409: OpenApiResponse(description="CPF ou e-mail já usaram o pedido grátis"),
             429: OpenApiResponse(description="Rate limit por IP excedido (5/h)"),
-            503: OpenApiResponse(description="Infosimples indisponível"),
         },
     )
     def post(self, request, *args, **kwargs):
@@ -240,7 +234,7 @@ class PedidoFreemiumCreateView(APIView):
 
         request_ip = _ip_request(request)
 
-        # 1. CAPTCHA Turnstile primeiro — mata bots antes de gastar Infosimples.
+        # 1. CAPTCHA Turnstile primeiro — mata bots antes de qualquer trabalho.
         turnstile = TurnstileClient()
         try:
             captcha_ok = turnstile.validate(turnstile_token, ip=request_ip)
@@ -255,86 +249,125 @@ class PedidoFreemiumCreateView(APIView):
         if not captcha_ok:
             raise TurnstileInvalidoError()
 
-        # 2. Anti-disposable e-mail (antes de Infosimples).
+        # 2. Anti-disposable e-mail.
         if is_disposable(email):
             raise EmailDescartavelError()
 
-        # 3. Infosimples — validação real do CPF/CNPJ na Receita.
-        infosimples = InfosimplesClient()
-        try:
-            resultado = infosimples.consultar_cpf_cnpj(cpf_cnpj)
-        except (InfosimplesError, requests.RequestException) as exc:
-            sentry_sdk.capture_exception(exc)
-            logger.error(
-                "Falha permanente ao consultar Infosimples",
-                extra={
-                    "event": "infosimples_falha_permanente",
-                    "error": str(exc),
-                },
-            )
-            raise InfosimplesIndisponivelError() from exc
-
-        if resultado.get("status") != STATUS_ATIVO:
-            raise DocumentoInativoError()
-
-        # 4. Blacklist check (CPF e email — telefone fora pós-renegociação).
+        # 3a. User-existence gate (spec lp-user-existence-gate, 2026-05-10).
+        # Antes do blacklist e do pedido-pendente, checa se algum
+        # identificador (email plain, email_hash, cpf_hash, telefone_hash)
+        # bate com User existente. Se sim → 409 com `redirect: "/login"`.
+        #
+        # Email plain entra na query alongside email_hash porque o gate
+        # também precisa pegar Users criados antes do backfill (paranoia
+        # extra — backfill já rodou em todos os ambientes, mas mantemos).
         cpf_hash_req = hash_cpf_cnpj(cpf_cnpj)
         email_hash_req = hash_email(email)
-        if FreemiumBlacklist.objects.filter(
-            Q(cpf_hash=cpf_hash_req) | Q(email_hash=email_hash_req)
+        telefone_hash_req = hash_telefone(telefone_e164)
+        UserModel = _get_user_model()
+        if UserModel.objects.filter(
+            Q(email__iexact=email)
+            | Q(email_hash=email_hash_req)
+            | Q(cpf_hash=cpf_hash_req)
+            | Q(telefone_hash=telefone_hash_req)
         ).exists():
             logger.info(
+                "Submissão freemium bloqueada — user já tem conta (gate)",
+                extra={"event": "freemium_user_existente_gate_hit"},
+            )
+            raise UserJaPossuiContaError()
+
+        # 3b. Pedido pendente com mesmos identificadores. Substitui a
+        # P-V10 (cancela e reusa) — agora bloqueia explicitamente. Itera
+        # porque cpf_cnpj/email/telefone são EncryptedCharField (não dá
+        # pra filtrar pelo cleartext direto).
+        pedidos_pendentes_qs = Pedido.objects.filter(
+            eh_gratuito=True,
+            status=PedidoStatus.AGUARDANDO_CONFIRMACAO_EMAIL,
+        )
+        for p in pedidos_pendentes_qs:
+            if (
+                hash_cpf_cnpj(p.cpf_cnpj or "") == cpf_hash_req
+                or hash_email(p.email or "") == email_hash_req
+                or hash_telefone(p.telefone or "") == telefone_hash_req
+            ):
+                logger.info(
+                    "Submissão freemium bloqueada — pedido pendente do mesmo identificador",
+                    extra={
+                        "event": "freemium_pedido_em_andamento_gate_hit",
+                        "pedido_id": str(p.id),
+                    },
+                )
+                raise PedidoEmAndamentoError()
+
+        # 4. Blacklist check em camadas:
+        #
+        # a) Hashes "fortes" (CPF, email, telefone) — permanente. Sem janela,
+        #    o registro vale enquanto o pedido existir.
+        # b) `device_hash` — permanente também. Anti-bypass do mesmo browser.
+        #    Skipped se vazio (FingerprintJS falhou: Brave/adblock).
+        # c) `ip_hash` — janela de FREEMIUM_IP_BLACKLIST_WINDOW_HOURS (24h).
+        #    Camada extra quando device_hash é instável (modo private). Não
+        #    é permanente pra não cauterizar IPs residenciais a longo prazo
+        #    (NAT, CGNAT).
+        #
+        # Cada camada é INDEPENDENTE — basta uma bater pra rejeitar.
+        ip_hash_req = hash_ip(request_ip) if request_ip else ""
+        permanent_q = (
+            Q(cpf_hash=cpf_hash_req)
+            | Q(email_hash=email_hash_req)
+            | Q(telefone_hash=telefone_hash_req)
+        )
+        if device_hash:
+            permanent_q |= Q(device_hash=device_hash)
+
+        if FreemiumBlacklist.objects.filter(permanent_q).exists():
+            logger.info(
                 "Tentativa de submissão freemium com identificador já na blacklist",
-                extra={"event": "freemium_blacklist_hit_submit"},
+                extra={
+                    "event": "freemium_blacklist_hit_submit",
+                    "layer": "permanent",
+                },
             )
             raise BlacklistHitError()
 
-        # 5. Saga de submissão atomic: cancela pedidos pendentes do mesmo
-        # CPF, cria novo Pedido + token + dispara e-mail.
+        # IP check com janela temporal + threshold (opção D).
+        #
+        # Conta quantas confirmações anteriores existem do mesmo IP dentro
+        # da janela. Bloqueia apenas se >= THRESHOLD — permite uso legítimo
+        # em redes compartilhadas (biblioteca, CGNAT). Ver settings/base.py
+        # pra calibragem.
+        if ip_hash_req:
+            from datetime import timedelta as _td
+
+            window_hours = getattr(settings, "FREEMIUM_IP_BLACKLIST_WINDOW_HOURS", 1)
+            threshold = getattr(settings, "FREEMIUM_IP_BLACKLIST_THRESHOLD", 3)
+            window_start = timezone.now() - _td(hours=window_hours)
+            ip_count = FreemiumBlacklist.objects.filter(
+                ip_hash=ip_hash_req,
+                created_at__gte=window_start,
+            ).count()
+            if ip_count >= threshold:
+                logger.info(
+                    "Submissão freemium bloqueada — IP atingiu threshold",
+                    extra={
+                        "event": "freemium_blacklist_hit_submit",
+                        "layer": "ip_threshold",
+                        "ip_count_in_window": ip_count,
+                        "threshold": threshold,
+                        "window_hours": window_hours,
+                    },
+                )
+                raise BlacklistHitError()
+
+        # 5. Saga de submissão atomic: cria novo Pedido + token + dispara
+        # e-mail. A P-V10 (cancela pedido pendente) ficou obsoleta — agora
+        # resubmissão com pedido pendente cai no PedidoEmAndamentoError
+        # acima.
         consent_ip = request_ip
         plano_gratuito = _get_plano_gratuito()
 
         with transaction.atomic():
-            # P-V10 wave 2: cancela pedidos AGUARDANDO_CONFIRMACAO_EMAIL
-            # anteriores do mesmo CPF/email. Semântica "último submit
-            # ganha" — evita N pedidos órfãos por CPF quando user faz back
-            # button + resubmit, double-click, ou typo no email.
-            #
-            # Filtra por hash do CPF e email NORMALIZADOS, não pelos campos
-            # encrypted (django-encrypted-model-fields não permite filter
-            # direto pelo cleartext). Cruzamos com a blacklist insertada
-            # mais tarde, então o cancelamento usa o mesmo lookup.
-            #
-            # Nota: como cpf_cnpj é EncryptedCharField, não dá pra filtrar
-            # por igualdade direta. Iteramos pelos pedidos pendentes
-            # (cardinalidade muito baixa em prática — N órfãos por CPF do
-            # mesmo IP são raros, e o throttle 5/h limita o pior caso).
-            pedidos_pendentes_qs = Pedido.objects.filter(
-                eh_gratuito=True,
-                status=PedidoStatus.AGUARDANDO_CONFIRMACAO_EMAIL,
-            )
-            ids_a_cancelar: list = []
-            for p in pedidos_pendentes_qs:
-                # cpf_cnpj é encrypted; a comparação usa cleartext.
-                if p.cpf_cnpj == cpf_cnpj or normalizar_email(p.email) == email:
-                    ids_a_cancelar.append(p.id)
-            if ids_a_cancelar:
-                Pedido.objects.filter(id__in=ids_a_cancelar).update(
-                    status=PedidoStatus.ERRO,
-                    last_error="cancelado_por_resubmissao",
-                    updated_at=timezone.now(),
-                )
-                # Deleta tokens associados aos pedidos cancelados.
-                FreemiumConfirmationToken.objects.filter(
-                    pedido_id__in=ids_a_cancelar
-                ).delete()
-                logger.info(
-                    "Pedidos freemium pendentes cancelados por resubmissão",
-                    extra={
-                        "event": "freemium_pedidos_pendentes_cancelados",
-                        "n_cancelados": len(ids_a_cancelar),
-                    },
-                )
 
             pedido = Pedido.objects.create(
                 nome=nome,
@@ -404,7 +437,7 @@ class FreemiumConfirmarView(APIView):
     GET / POST /api/freemium/confirmar/?token=X
 
     Etapa 2 do double opt-in. P-V2 wave 2 separa GET de POST:
-    - GET → 302 redirect para `${FRONTEND_BASE_URL}/oracao-gratis/confirmar?token=X`
+    - GET → 302 redirect para `${FRONTEND_BASE_URL}/confirmar?token=X`
       onde o frontend mostra um botão "Confirmar minha oração". NÃO toca o
       token. Defende contra mail scanners (Safe Links, Mimecast, Proofpoint)
       que fazem GET pre-fetch nos links — antes da P-V2, o pre-fetch do
@@ -432,9 +465,9 @@ class FreemiumConfirmarView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     # P-V13 wave 2: scope dedicado, mais generoso (30/h vs 5/h da
-    # submissão). Confirmar é mais barato pro backend (sem Infosimples) e o
-    # mesmo IP pode legitimamente clicar várias vezes (mail scanner pre-
-    # fetch, retry de browser, refresh acidental).
+    # submissão). Confirmar é mais barato pro backend e o mesmo IP pode
+    # legitimamente clicar várias vezes (mail scanner pre-fetch, retry de
+    # browser, refresh acidental).
     throttle_scope = "freemium_confirmar_ip"
 
     @extend_schema(
@@ -451,7 +484,7 @@ class FreemiumConfirmarView(APIView):
         responses={
             302: OpenApiResponse(
                 description=(
-                    "Redirect para `${FRONTEND_BASE_URL}/oracao-gratis/confirmar?token=X`. "
+                    "Redirect para `${FRONTEND_BASE_URL}/confirmar?token=X`. "
                     "NÃO consome o token — apenas o POST executa a saga."
                 )
             ),
@@ -477,10 +510,10 @@ class FreemiumConfirmarView(APIView):
         # caminho — o frontend chama POST e recebe o erro pastoral.
         if token_str:
             redirect_url = (
-                f"{frontend_base}/oracao-gratis/confirmar?token={token_str}"
+                f"{frontend_base}/confirmar?token={token_str}"
             )
         else:
-            redirect_url = f"{frontend_base}/oracao-gratis/confirmar"
+            redirect_url = f"{frontend_base}/confirmar"
         response = HttpResponseRedirect(redirect_url)
         return _aplicar_headers_seguranca_confirmar(response)
 
@@ -585,10 +618,18 @@ class FreemiumConfirmarView(APIView):
 
         # Defesa em profundidade: re-check de blacklist. Race entre
         # dois fluxos diferentes (mesmo CPF passando submit em
-        # paralelo) seria pego aqui.
-        if FreemiumBlacklist.objects.filter(
-            Q(cpf_hash=cpf_hash_req) | Q(email_hash=email_hash_req)
-        ).exists():
+        # paralelo) seria pego aqui. Inclui telefone_hash + device_hash
+        # desde 2026-05-10.
+        telefone_hash_req = hash_telefone(pedido.telefone or "")
+        device_hash_req = pedido.device_hash or ""
+        blacklist_q = (
+            Q(cpf_hash=cpf_hash_req)
+            | Q(email_hash=email_hash_req)
+            | Q(telefone_hash=telefone_hash_req)
+        )
+        if device_hash_req:
+            blacklist_q |= Q(device_hash=device_hash_req)
+        if FreemiumBlacklist.objects.filter(blacklist_q).exists():
             logger.info(
                 "Blacklist hit detectado durante confirmação freemium",
                 extra={
@@ -600,6 +641,9 @@ class FreemiumConfirmarView(APIView):
 
         # Cria User. Colisão de email captura `IntegrityError` e
         # responde 409 igual à blacklist (evita oracle de enumeração: P-3).
+        # `force_change_password=True` força troca da senha temporária no
+        # primeiro login. `freemium_used_at` setado ANTES do
+        # `marcar_usado` do token — fica em sync com a transição do Pedido.
         try:
             user = UserModel.objects.create_user(
                 email=pedido.email,
@@ -608,6 +652,7 @@ class FreemiumConfirmarView(APIView):
                 cpf_cnpj=pedido.cpf_cnpj,
                 telefone=pedido.telefone,
                 force_change_password=True,
+                freemium_used_at=timezone.now(),
             )
         except IntegrityError as exc:
             logger.info(
@@ -623,10 +668,17 @@ class FreemiumConfirmarView(APIView):
         # Grava blacklist ANTES de tocar no cache (P-V6 wave 2): se o
         # blacklist insert falhar (race entre dois fluxos paralelos), a
         # transaction rolla back e o cache não fica com senha órfã 24h.
+        # `telefone_hash` re-adicionado em 2026-05-10 (spec lp-user-existence-gate).
+        # `device_hash` adicionado em 2026-05-10 (anti-bypass aba anônima).
+        # `ip_hash` adicionado em 2026-05-11 (camada extra quando device_hash
+        # é instável — Brave/Safari/incognito).
         try:
             FreemiumBlacklist.objects.create(
                 cpf_hash=cpf_hash_req,
                 email_hash=email_hash_req,
+                telefone_hash=hash_telefone(pedido.telefone or ""),
+                device_hash=(pedido.device_hash or None),
+                ip_hash=(hash_ip(pedido.consent_ip) if pedido.consent_ip else None),
             )
         except IntegrityError as exc:
             logger.info(

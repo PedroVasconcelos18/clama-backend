@@ -1,11 +1,7 @@
 """
 Fixtures comuns dos testes do app freemium.
 
-Pós-renegociação 2026-05-08:
 - Mock TurnstileClient sempre-válido (default).
-- Mock InfosimplesClient sempre-ATIVO (default — já é assim em mock_mode
-  via `INFOSIMPLES_TOKEN=""`, mas adicionamos fixture-level pra clareza
-  e composição com `override_settings` em testes específicos).
 - Silencia despachos de Celery do fluxo freemium (`enviar_email_confirmacao_freemium_task`
   e `gerar_oracao_task`) para que os testes possam afirmar sobre `.delay`
   sem efeitos colaterais.
@@ -49,16 +45,6 @@ def turnstile_invalido():
     with patch(
         "clama.freemium.api.views.TurnstileClient.validate",
         return_value=False,
-    ) as mocked:
-        yield mocked
-
-
-@pytest.fixture
-def infosimples_ativo():
-    """Patch do InfosimplesClient.consultar_cpf_cnpj para retornar ATIVO."""
-    with patch(
-        "clama.freemium.api.views.InfosimplesClient.consultar_cpf_cnpj",
-        return_value={"status": "ATIVO", "nome": "PESSOA TESTE"},
     ) as mocked:
         yield mocked
 

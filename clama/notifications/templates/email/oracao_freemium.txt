@@ -10,13 +10,13 @@ Sua oração foi escrita com carinho — que ela seja bálsamo nestes dias:
 
 {% if login_email and senha_temporaria %}SUAS CREDENCIAIS DE ACESSO
 
-Guardamos um cantinho pra você no Clama. Suas credenciais ficam guardadas
-com você até que o login esteja disponível em breve.
+Sua conta no Clama já está ativa. Use as credenciais abaixo no primeiro
+acesso — vamos pedir pra você trocar a senha temporária por uma sua.
 
 E-mail: {{ login_email }}
 Senha temporária: {{ senha_temporaria }}
 
-Anote em um lugar seguro — vamos abrir o login do Clama em breve.
+Entre em: {{ login_url }}
 
 ---
 

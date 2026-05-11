@@ -1,14 +1,17 @@
 """
 Models do app freemium.
 
-A `FreemiumBlacklist` registra os identificadores (CPF/CNPJ, e-mail) que já
-consumiram seu pedido gratuito. Armazenamos apenas hashes HMAC-SHA-256 keyed
-— não guardamos PII em claro nesta tabela. O lookup acontece
-hashing-then-compare.
+A `FreemiumBlacklist` registra os identificadores (CPF/CNPJ, e-mail,
+telefone) que já consumiram seu pedido gratuito. Armazenamos apenas hashes
+HMAC-SHA-256 keyed — não guardamos PII em claro nesta tabela. O lookup
+acontece hashing-then-compare.
 
-Pós-renegociação 2026-05-08: o `telefone_hash` foi removido. Sem OTP que
-confirmasse posse do número, hash de telefone era falso-positivo (qualquer
-um digita um número arbitrário e bloqueia outra pessoa).
+Histórico:
+- 2026-05-08 (renegociação): `telefone_hash` removido (sem OTP, falso-positivo).
+- 2026-05-10 (spec lp-user-existence-gate): `telefone_hash` re-adicionado
+  como anti-bypass (combinado com user-existence gate, telefone agora cobre
+  o caso "user já existe mas tenta com email/CPF diferente"). É nullable
+  porque o backfill da 0005 popula a partir do `Pedido.telefone` linkado.
 
 `FreemiumConfirmationToken` armazena o token opaco enviado por e-mail no
 fluxo double opt-in: TTL 24h, single-use, validado e consumido na rota
@@ -47,6 +50,45 @@ class FreemiumBlacklist(UUIDPKModel, TimestampedModel):
         db_index=True,
         verbose_name="Hash do e-mail",
         help_text="SHA-256 do e-mail normalizado (lowercase + strip).",
+    )
+    telefone_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        null=True,
+        blank=True,
+        verbose_name="Hash do telefone",
+        help_text=(
+            "HMAC-SHA-256 do telefone (somente dígitos). Re-adicionado em "
+            "2026-05-10 — nullable pra suportar entries legadas sem telefone."
+        ),
+    )
+    device_hash = models.CharField(
+        max_length=128,
+        db_index=True,
+        null=True,
+        blank=True,
+        verbose_name="Device fingerprint",
+        help_text=(
+            "visitorId do FingerprintJS coletado no submit. Bloqueia submits "
+            "subsequentes da mesma máquina+browser mesmo com CPF/email/"
+            "telefone diferentes (anti-bypass de aba anônima / email "
+            "temporário). Nullable: pode vir vazio se FingerprintJS falhar "
+            "(Brave shields, adblockers) — nesse caso não bloqueia."
+        ),
+    )
+    ip_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        null=True,
+        blank=True,
+        verbose_name="Hash do IP de origem",
+        help_text=(
+            "HMAC-SHA-256 do consent_ip do Pedido. Bloqueia submits da mesma "
+            "rede dentro da janela de IP_BLACKLIST_WINDOW (default 24h). "
+            "Camada extra anti-bypass quando device_hash é instável (Brave, "
+            "Safari, modo private). Trade-off: bloqueia famílias atrás do "
+            "mesmo IP — admin pode desbloquear manualmente."
+        ),
     )
 
     class Meta:

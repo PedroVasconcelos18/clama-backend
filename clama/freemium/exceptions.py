@@ -2,61 +2,27 @@
 Exceções customizadas do app freemium.
 
 Convenções:
-- `InfosimplesError`: erro técnico bruto (rede / 5xx esgotado). Não vai
-  direto para o usuário; a view captura e converte em 503 pastoral.
-- `DocumentoInativoError`: CPF/CNPJ válido no algoritmo mas inativo na
-  Receita (SUSPENSO, CANCELADO, INEXISTENTE). 400 pastoral.
-- `BlacklistHitError`: CPF/email já usaram o pedido gratuito.
-  409 pastoral.
+- `BlacklistHitError`: CPF/email/telefone já usaram o pedido gratuito.
+  409 pastoral. (Telefone re-adicionado em 2026-05-10.)
 - `EmailDescartavelError`: e-mail é de provedor temporário/descartável.
   400 pastoral.
 - `ConfirmationTokenInvalidoError` / `ConfirmationTokenExpiradoError`:
   token de confirmação por e-mail (double opt-in) não confere ou expirou.
   400 pastoral em ambos os casos.
 - `TurnstileInvalidoError`: token Cloudflare Turnstile rejeitado. 400 pastoral.
+- `UserJaPossuiContaError`: gate user-existence na submissão freemium —
+  user já tem conta. 409 com `redirect: "/login"`.
+- `PedidoEmAndamentoError`: gate de pedido pendente (resubmit antes da
+  confirmação por email). 409 sem redirect (toast pastoral no front).
 """
 
-from clama.core.exceptions import ClamaBaseException, PastoralAPIException
+from clama.core.exceptions import PastoralAPIException
 from clama.core.pastoral_messages import (
     MSG_FREEMIUM_BLACKLIST_HIT,
-    MSG_FREEMIUM_DOCUMENTO_INATIVO,
     MSG_FREEMIUM_EMAIL_DESCARTAVEL,
-    MSG_FREEMIUM_INFOSIMPLES_INDISPONIVEL,
+    MSG_FREEMIUM_PEDIDO_EM_ANDAMENTO,
+    MSG_FREEMIUM_USER_JA_POSSUI_CONTA,
 )
-
-
-class InfosimplesError(ClamaBaseException):
-    """
-    Erro técnico ao consultar a Infosimples (rede, timeout, 5xx esgotado).
-
-    Não é uma `PastoralAPIException` porque não é de uso direto na view —
-    a view captura e converte em 503 pastoral controladamente.
-    """
-
-    code = "infosimples_error"
-    message = "Falha ao consultar Infosimples"
-    pastoral_message = MSG_FREEMIUM_INFOSIMPLES_INDISPONIVEL
-
-
-class InfosimplesIndisponivelError(PastoralAPIException):
-    """
-    Versão "pastoral" do erro Infosimples — usada na view quando o
-    serviço externo está fora do ar para retornar 503 ao usuário.
-    """
-
-    status_code = 503
-    code = "infosimples_indisponivel"
-    message = "Serviço de validação indisponível"
-    pastoral_message = MSG_FREEMIUM_INFOSIMPLES_INDISPONIVEL
-
-
-class DocumentoInativoError(PastoralAPIException):
-    """CPF/CNPJ inativo na Receita (SUSPENSO, CANCELADO, INEXISTENTE)."""
-
-    status_code = 400
-    code = "documento_inativo"
-    message = "CPF/CNPJ não está ativo na Receita"
-    pastoral_message = MSG_FREEMIUM_DOCUMENTO_INATIVO
 
 
 class BlacklistHitError(PastoralAPIException):
@@ -108,3 +74,35 @@ class TurnstileInvalidoError(PastoralAPIException):
     pastoral_message = (
         "Verificação anti-robô falhou. Atualize a página e tente de novo."
     )
+
+
+class UserJaPossuiContaError(PastoralAPIException):
+    """
+    User-existence gate hit na submissão freemium.
+
+    Algum dos identificadores (email, email_hash, cpf_hash, telefone_hash)
+    bate com um User existente — provavelmente criado pela saga G1
+    anterior. Frontend deve seguir o `redirect` pra `/login` e exibir a
+    `pastoral_message` como flash.
+    """
+
+    status_code = 409
+    code = "user_ja_possui_conta"
+    message = "User já tem conta — redirect para /login"
+    pastoral_message = MSG_FREEMIUM_USER_JA_POSSUI_CONTA
+
+    def __init__(self):
+        super().__init__(extra={"redirect": "/login"})
+
+
+class PedidoEmAndamentoError(PastoralAPIException):
+    """
+    Pedido pendente (`AGUARDANDO_CONFIRMACAO_EMAIL`) com mesmos
+    identificadores. Resubmissão duplicada — 409 sem redirect, frontend
+    mostra toast pastoral.
+    """
+
+    status_code = 409
+    code = "pedido_em_andamento"
+    message = "Pedido pendente aguardando confirmação por e-mail"
+    pastoral_message = MSG_FREEMIUM_PEDIDO_EM_ANDAMENTO

@@ -161,7 +161,7 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Cria o pedido com campos de consentimento LGPD."""
+        """Cria o pedido com campos de consentimento LGPD + vínculo com user."""
         # Remove consent_aceito do validated_data (será setado manualmente)
         consent_aceito = validated_data.pop("consent_aceito", False)
 
@@ -180,6 +180,12 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         validated_data["consent_versao"] = POLITICA_VERSAO_ATUAL
         validated_data["consent_aceito_at"] = timezone.now()
         validated_data["consent_ip"] = consent_ip
+
+        # Spec lp-user-existence-gate (2026-05-10): vincula Pedido ao User
+        # autenticado. PedidoCreateView usa IsAuthenticated, então
+        # request.user nunca é AnonymousUser aqui.
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            validated_data["user"] = request.user
 
         return super().create(validated_data)
 

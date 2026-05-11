@@ -1,15 +1,18 @@
 """
-Testes do endpoint POST /api/freemium/pedidos/ (pós-renegociação 2026-05-08).
+Testes do endpoint POST /api/freemium/pedidos/.
 
 Cenários do I/O Matrix cobertos:
 - Submissão happy → 201 com Pedido em AGUARDANDO_CONFIRMACAO_EMAIL e e-mail
   de confirmação enfileirado (transaction.on_commit).
 - CAPTCHA Turnstile inválido → 400 antes de qualquer chamada externa.
 - CPF inválido (algoritmo) → 400 no deserialize.
-- E-mail descartável → 400 antes de Infosimples.
-- CPF inativo na Receita → 400.
-- Infosimples down (após retries) → 503 + Sentry alert.
-- Blacklist hit (CPF, email) → 409 — telefone fora pós-renegociação.
+- E-mail descartável → 400.
+- User-existence gate (spec lp-user-existence-gate, 2026-05-10) → 409
+  `user_ja_possui_conta` com `redirect: "/login"` se email/cpf/telefone
+  bater em User existente.
+- Pedido pendente do mesmo identificador → 409 `pedido_em_andamento`
+  (substitui a P-V10 cancela-e-reusa).
+- Blacklist hit (CPF, email, telefone) → 409 — telefone re-adicionado.
 - Rate limit IP → 429 (não testado em DRF default em settings de teste,
   mas a estrutura de throttle é comprovada pelo scope `freemium_pedido_ip`).
 - Pedido persistido com status correto, device_hash capturado, token
@@ -26,7 +29,12 @@ from django.urls import reverse
 from rest_framework import status as drf_status
 from rest_framework.test import APIClient
 
-from clama.freemium.hashing import hash_cpf_cnpj, hash_email
+from clama.freemium.hashing import (
+    hash_cpf_cnpj,
+    hash_email,
+    hash_ip,
+    hash_telefone,
+)
 from clama.freemium.models import (
     FreemiumBlacklist,
     FreemiumConfirmationToken,
@@ -217,55 +225,16 @@ class TestPedidoFreemiumValidacaoSerializer:
 
 @pytest.mark.django_db
 class TestPedidoFreemiumEmailDescartavel:
-    def test_email_descartavel_retorna_400_antes_de_infosimples(
+    def test_email_descartavel_retorna_400(
         self, api_client, url_pedido_freemium, plano_gratuito
     ):
-        # Garante que se Infosimples for chamado o teste falha — afirmação
-        # negativa de "vem antes".
-        with patch(
-            "clama.freemium.api.views.InfosimplesClient.consultar_cpf_cnpj"
-        ) as mock_infosimples:
-            response = api_client.post(
-                url_pedido_freemium,
-                _payload(email="user@mailinator.com"),
-                format="json",
-            )
-
+        response = api_client.post(
+            url_pedido_freemium,
+            _payload(email="user@mailinator.com"),
+            format="json",
+        )
         assert response.status_code == drf_status.HTTP_400_BAD_REQUEST
         assert response.data["error"]["code"] == "email_descartavel"
-        mock_infosimples.assert_not_called()
-        assert not Pedido.objects.exists()
-
-
-@pytest.mark.django_db
-class TestPedidoFreemiumInfosimples:
-    def test_cpf_inativo_retorna_400(
-        self, api_client, url_pedido_freemium, plano_gratuito
-    ):
-        with patch(
-            "clama.freemium.api.views.InfosimplesClient.consultar_cpf_cnpj",
-            return_value={"status": "SUSPENSO", "nome": None},
-        ):
-            response = api_client.post(
-                url_pedido_freemium, _payload(), format="json"
-            )
-        assert response.status_code == drf_status.HTTP_400_BAD_REQUEST
-        assert response.data["error"]["code"] == "documento_inativo"
-        assert not Pedido.objects.exists()
-
-    def test_infosimples_down_retorna_503_e_alerta_sentry(
-        self, api_client, url_pedido_freemium, plano_gratuito
-    ):
-        with patch(
-            "clama.freemium.api.views.InfosimplesClient.consultar_cpf_cnpj",
-            side_effect=requests.RequestException("network down"),
-        ), patch("clama.freemium.api.views.sentry_sdk.capture_exception") as sentry:
-            response = api_client.post(
-                url_pedido_freemium, _payload(), format="json"
-            )
-        assert response.status_code == drf_status.HTTP_503_SERVICE_UNAVAILABLE
-        assert response.data["error"]["code"] == "infosimples_indisponivel"
-        sentry.assert_called_once()
         assert not Pedido.objects.exists()
 
 
@@ -408,14 +377,14 @@ class TestPedidoFreemiumDeviceHashOpcional:
 
 
 @pytest.mark.django_db
-class TestPedidoFreemiumCancelaResubmissao:
+class TestPedidoFreemiumPedidoEmAndamento:
     """
-    P-V10 wave 2: pedidos AGUARDANDO_CONFIRMACAO_EMAIL anteriores do mesmo
-    CPF/email são cancelados antes do novo insert (semântica "último submit
-    ganha"). Evita N órfãos por CPF.
+    Spec lp-user-existence-gate (2026-05-10): resubmissão com pedido
+    pendente (`AGUARDANDO_CONFIRMACAO_EMAIL`) NÃO cancela mais o anterior
+    — agora bloqueia com 409 `pedido_em_andamento`. P-V10 obsoleto.
     """
 
-    def test_resubmissao_cancela_pedido_pendente_anterior(
+    def test_resubmissao_mesmo_cpf_retorna_409_pedido_em_andamento(
         self, api_client, url_pedido_freemium, plano_gratuito
     ):
         # Primeira submissão.
@@ -425,27 +394,396 @@ class TestPedidoFreemiumCancelaResubmissao:
         assert r1.status_code == drf_status.HTTP_201_CREATED
         pedido1_id = r1.data["pedido_id"]
 
-        # Segunda submissão do mesmo CPF/email.
-        with case.captureOnCommitCallbacks(execute=True):
-            r2 = api_client.post(url_pedido_freemium, _payload(), format="json")
-        assert r2.status_code == drf_status.HTTP_201_CREATED
-        pedido2_id = r2.data["pedido_id"]
-        assert pedido1_id != pedido2_id
+        # Segunda submissão do mesmo CPF/email/telefone — agora bloqueada.
+        r2 = api_client.post(url_pedido_freemium, _payload(), format="json")
+        assert r2.status_code == drf_status.HTTP_409_CONFLICT
+        assert r2.data["error"]["code"] == "pedido_em_andamento"
 
-        # Pedido 1 ficou cancelado (status ERRO + last_error).
+        # Pedido 1 NÃO foi cancelado — continua em
+        # AGUARDANDO_CONFIRMACAO_EMAIL.
         pedido1 = Pedido.objects.get(id=pedido1_id)
-        assert pedido1.status == PedidoStatus.ERRO
-        assert pedido1.last_error == "cancelado_por_resubmissao"
+        assert pedido1.status == PedidoStatus.AGUARDANDO_CONFIRMACAO_EMAIL
 
-        # Pedido 2 está em AGUARDANDO_CONFIRMACAO_EMAIL.
-        pedido2 = Pedido.objects.get(id=pedido2_id)
-        assert pedido2.status == PedidoStatus.AGUARDANDO_CONFIRMACAO_EMAIL
+        # Apenas um Pedido total (não criou um novo).
+        assert Pedido.objects.count() == 1
 
-        # Token do pedido 1 foi deletado (cleanup).
-        assert not FreemiumConfirmationToken.objects.filter(
-            pedido_id=pedido1_id
-        ).exists()
-        # Token do pedido 2 existe.
-        assert FreemiumConfirmationToken.objects.filter(
-            pedido_id=pedido2_id
-        ).exists()
+    def test_resubmissao_mesmo_telefone_retorna_409_pedido_em_andamento(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            r1 = api_client.post(url_pedido_freemium, _payload(), format="json")
+        assert r1.status_code == drf_status.HTTP_201_CREATED
+
+        # Email + CPF diferentes, mesmo telefone.
+        r2 = api_client.post(
+            url_pedido_freemium,
+            _payload(
+                email="outro@example.com",
+                cpf_cnpj="11144477735",  # outro CPF válido (DV ok)
+            ),
+            format="json",
+        )
+        assert r2.status_code == drf_status.HTTP_409_CONFLICT
+        assert r2.data["error"]["code"] == "pedido_em_andamento"
+
+
+@pytest.mark.django_db
+class TestPedidoFreemiumUserExistenteGate:
+    """
+    Spec lp-user-existence-gate (2026-05-10): se algum identificador
+    bater em User existente → 409 `user_ja_possui_conta` com
+    `redirect: "/login"`.
+    """
+
+    def _criar_user(self, **overrides):
+        UserModel = get_user_model()
+        defaults = dict(
+            email=EMAIL_OK,
+            password="senha-temp-existente",
+            cpf_cnpj=CPF_VALIDO,
+            telefone=TELEFONE_OK,
+        )
+        defaults.update(overrides)
+        return UserModel.objects.create_user(**defaults)
+
+    def test_email_de_user_existente_retorna_409_user_ja_possui_conta(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        self._criar_user()
+        response = api_client.post(
+            url_pedido_freemium, _payload(), format="json"
+        )
+        assert response.status_code == drf_status.HTTP_409_CONFLICT
+        assert response.data["error"]["code"] == "user_ja_possui_conta"
+        assert response.data["error"]["redirect"] == "/login"
+        assert not Pedido.objects.exists()
+
+    def test_email_gmail_alias_de_user_existente_retorna_409_redirect(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """
+        User cadastrou `alicetest@gmail.com`. Atacante submete com
+        `alice.test+1@gmail.com` — mesma caixa, mesma origem. Hash bate
+        pela canonicalização Gmail.
+        """
+        self._criar_user(email="alicetest@gmail.com")
+        response = api_client.post(
+            url_pedido_freemium,
+            _payload(email="alice.test+1@gmail.com"),
+            format="json",
+        )
+        assert response.status_code == drf_status.HTTP_409_CONFLICT
+        assert response.data["error"]["code"] == "user_ja_possui_conta"
+
+    def test_cpf_de_user_existente_retorna_409_redirect(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        self._criar_user()
+        response = api_client.post(
+            url_pedido_freemium,
+            _payload(email="outro@example.com", telefone="+5511777776666"),
+            format="json",
+        )
+        assert response.status_code == drf_status.HTTP_409_CONFLICT
+        assert response.data["error"]["code"] == "user_ja_possui_conta"
+
+    def test_telefone_de_user_existente_retorna_409_redirect(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        self._criar_user()
+        response = api_client.post(
+            url_pedido_freemium,
+            _payload(
+                email="outro@example.com",
+                cpf_cnpj="11144477735",  # outro CPF válido (DV ok)
+            ),
+            format="json",
+        )
+        assert response.status_code == drf_status.HTTP_409_CONFLICT
+        assert response.data["error"]["code"] == "user_ja_possui_conta"
+
+
+@pytest.mark.django_db
+class TestPedidoFreemiumBlacklistTelefone:
+    """telefone_hash re-adicionado em 2026-05-10 — agora bloqueia também."""
+
+    def test_blacklist_hit_telefone_retorna_409(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        FreemiumBlacklist.objects.create(
+            cpf_hash="z" * 64,
+            email_hash="y" * 64,
+            telefone_hash=hash_telefone(TELEFONE_OK),
+        )
+        response = api_client.post(
+            url_pedido_freemium, _payload(), format="json"
+        )
+        assert response.status_code == drf_status.HTTP_409_CONFLICT
+        assert response.data["error"]["code"] == "freemium_blacklist_hit"
+        assert not Pedido.objects.exists()
+
+
+@pytest.mark.django_db
+class TestPedidoFreemiumBlacklistDeviceHash:
+    """
+    Anti-bypass aba anônima (2026-05-10): mesmo com email/CPF/telefone
+    totalmente novos, se o `device_hash` (FingerprintJS visitorId) bater
+    com entry da blacklist → 409.
+    """
+
+    def test_device_hash_diferente_passa(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """Sanity check: device_hash novo NÃO bloqueia."""
+        FreemiumBlacklist.objects.create(
+            cpf_hash="z" * 64,
+            email_hash="y" * 64,
+            device_hash="device-hash-de-outro-browser",
+        )
+        from django.test import TestCase
+
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            response = api_client.post(
+                url_pedido_freemium,
+                _payload(device_hash="device-hash-novo-xyz-1234567"),
+                format="json",
+            )
+        assert response.status_code == drf_status.HTTP_201_CREATED
+
+    def test_device_hash_igual_bloqueia_mesmo_com_outros_identificadores_novos(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """
+        Cenário do user: aba anônima + email temp + CPF gerado + telefone
+        falso. Tudo "novo" exceto o device_hash do browser. Deve bater.
+        """
+        FreemiumBlacklist.objects.create(
+            cpf_hash="z" * 64,  # CPF irrelevante
+            email_hash="y" * 64,  # email irrelevante
+            telefone_hash="x" * 64,  # telefone irrelevante
+            device_hash=DEVICE_HASH_OK,
+        )
+        response = api_client.post(
+            url_pedido_freemium,
+            _payload(
+                # TUDO diferente do payload original
+                email="atacante_temp@10minutemail.test",  # email novo
+                cpf_cnpj="11144477735",  # CPF válido novo
+                telefone="+5511777776666",  # telefone novo
+                device_hash=DEVICE_HASH_OK,  # MESMO device
+            ),
+            format="json",
+        )
+        # 10minutemail é disposable — pra isolar o teste do
+        # device_hash check, vamos usar outro domínio
+        assert response.status_code in (
+            drf_status.HTTP_409_CONFLICT,
+            drf_status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_device_hash_bloqueia_com_email_real(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """Isolando do disposable check: usa Gmail e device_hash repetido."""
+        FreemiumBlacklist.objects.create(
+            cpf_hash="z" * 64,
+            email_hash="y" * 64,
+            telefone_hash="x" * 64,
+            device_hash=DEVICE_HASH_OK,
+        )
+        response = api_client.post(
+            url_pedido_freemium,
+            _payload(
+                email="atacante-novo@example.com",
+                cpf_cnpj="11144477735",
+                telefone="+5511777776666",
+                device_hash=DEVICE_HASH_OK,
+            ),
+            format="json",
+        )
+        assert response.status_code == drf_status.HTTP_409_CONFLICT
+        assert response.data["error"]["code"] == "freemium_blacklist_hit"
+        assert not Pedido.objects.exists()
+
+    def test_device_hash_vazio_nao_dispara_check(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """
+        Falha-aberta: se FingerprintJS falha (Brave shields), device_hash
+        vem vazio. Não queremos bloquear usuária legítima — então o check
+        é skipped quando device_hash é "".
+        """
+        FreemiumBlacklist.objects.create(
+            cpf_hash="z" * 64,
+            email_hash="y" * 64,
+            device_hash="",  # blacklist legada também com "" — não deve bater
+        )
+        from django.test import TestCase
+
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            response = api_client.post(
+                url_pedido_freemium,
+                _payload(device_hash=""),
+                format="json",
+            )
+        # Não deve travar — device_hash vazio sai do check.
+        assert response.status_code == drf_status.HTTP_201_CREATED
+
+
+@pytest.mark.django_db
+class TestPedidoFreemiumBlacklistIp:
+    """
+    Anti-bypass por IP — opção D (threshold de confirmações).
+
+    Permite uso legítimo em rede compartilhada (biblioteca, CGNAT móvel)
+    bloqueando só quando o acúmulo de confirmações no mesmo IP é
+    suspeito. Default threshold=3 dentro de window_hours=1 (settings).
+    """
+
+    def _ip_de_teste(self):
+        return "203.0.113.55"
+
+    def _criar_entries(self, ip: str, n: int):
+        """Cria N entries na blacklist com o mesmo ip_hash (todas recentes)."""
+        for i in range(n):
+            FreemiumBlacklist.objects.create(
+                cpf_hash=f"cpf-{i}".ljust(64, "0"),
+                email_hash=f"email-{i}".ljust(64, "0"),
+                ip_hash=hash_ip(ip),
+            )
+
+    def test_ip_abaixo_do_threshold_libera(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """2 entries no IP (threshold default=3) → 3ª submissão passa."""
+        from django.test import TestCase
+
+        ip = self._ip_de_teste()
+        self._criar_entries(ip, 2)
+
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            response = api_client.post(
+                url_pedido_freemium,
+                _payload(),
+                format="json",
+                HTTP_X_FORWARDED_FOR=ip,
+            )
+        assert response.status_code == drf_status.HTTP_201_CREATED
+
+    def test_ip_atinge_threshold_bloqueia(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """3 entries no IP → 4ª submissão é bloqueada (sinal de abuso)."""
+        ip = self._ip_de_teste()
+        self._criar_entries(ip, 3)
+
+        response = api_client.post(
+            url_pedido_freemium,
+            _payload(
+                email="atacante-novo@example.com",
+                cpf_cnpj="11144477735",
+                telefone="+5511777776666",
+                device_hash="device-novo-da-aba-anonima",
+            ),
+            format="json",
+            HTTP_X_FORWARDED_FOR=ip,
+        )
+        assert response.status_code == drf_status.HTTP_409_CONFLICT
+        assert response.data["error"]["code"] == "freemium_blacklist_hit"
+        assert not Pedido.objects.exists()
+
+    def test_threshold_customizado_via_settings(
+        self, api_client, url_pedido_freemium, plano_gratuito, settings
+    ):
+        """Threshold é configurável via env."""
+        settings.FREEMIUM_IP_BLACKLIST_THRESHOLD = 2  # mais restritivo
+
+        ip = self._ip_de_teste()
+        self._criar_entries(ip, 2)
+
+        response = api_client.post(
+            url_pedido_freemium,
+            _payload(),
+            format="json",
+            HTTP_X_FORWARDED_FOR=ip,
+        )
+        assert response.status_code == drf_status.HTTP_409_CONFLICT
+
+    def test_entries_fora_da_janela_nao_contam(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """
+        Janela default = 1h. Entries com >1h NÃO contam pro threshold,
+        protegendo CGNAT de cauterização longa.
+        """
+        from datetime import timedelta
+        from django.test import TestCase
+        from django.utils import timezone
+
+        ip = self._ip_de_teste()
+        # 3 entries antigas (>1h) — deveriam estourar threshold, mas estão
+        # fora da janela.
+        for i in range(3):
+            entry = FreemiumBlacklist.objects.create(
+                cpf_hash=f"old-cpf-{i}".ljust(64, "0"),
+                email_hash=f"old-email-{i}".ljust(64, "0"),
+                ip_hash=hash_ip(ip),
+            )
+            FreemiumBlacklist.objects.filter(pk=entry.pk).update(
+                created_at=timezone.now() - timedelta(hours=2)
+            )
+
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            response = api_client.post(
+                url_pedido_freemium,
+                _payload(),
+                format="json",
+                HTTP_X_FORWARDED_FOR=ip,
+            )
+        assert response.status_code == drf_status.HTTP_201_CREATED
+
+    def test_ip_diferente_libera(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """Sanity: IP novo nunca conta — mesmo com outras entries no banco."""
+        from django.test import TestCase
+
+        self._criar_entries("198.51.100.10", 5)  # IP diferente, várias entries
+
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            response = api_client.post(
+                url_pedido_freemium,
+                _payload(),
+                format="json",
+                HTTP_X_FORWARDED_FOR="203.0.113.99",
+            )
+        assert response.status_code == drf_status.HTTP_201_CREATED
+
+
+@pytest.mark.django_db
+class TestSagaDeviceHashNaBlacklist:
+    """Após confirmação, blacklist criada inclui device_hash do Pedido."""
+
+    def test_saga_grava_device_hash_na_blacklist(
+        self, api_client, url_pedido_freemium, plano_gratuito
+    ):
+        """Submit cria Pedido com device_hash; saga (test_views_confirmar)
+        usa esse device_hash quando insere na blacklist."""
+        from django.test import TestCase
+
+        case = TestCase()
+        with case.captureOnCommitCallbacks(execute=True):
+            r = api_client.post(
+                url_pedido_freemium,
+                _payload(device_hash="dev-hash-pra-blacklist-xyz"),
+                format="json",
+            )
+        assert r.status_code == drf_status.HTTP_201_CREATED
+        pedido = Pedido.objects.get(id=r.data["pedido_id"])
+        assert pedido.device_hash == "dev-hash-pra-blacklist-xyz"

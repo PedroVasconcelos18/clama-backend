@@ -1,7 +1,15 @@
 """
 Testes para o endpoint POST /api/pedidos/.
+
+Spec G2.a backend (entregue via spec lp-user-existence-gate em 2026-05-10):
+o endpoint passou a exigir `IsAuthenticated + IsCustomerPasswordCurrent`.
+Para isolar os testes existentes (validação, persistence, valor livre) da
+regra de auth, o fixture `auth_customer` força um user autenticado em
+todos os tests deste módulo. Cenários de paywall propriamente ditos
+(401 anônimo, 403 force_change_password) ficam em test_paywall.py.
 """
 import pytest
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.urls import reverse
 from rest_framework import status
@@ -10,6 +18,8 @@ from rest_framework.test import APIClient
 from clama.orders.models import CanalEntrega, Pedido, PedidoStatus
 from clama.plans.models import Complexidade, Plan
 from clama.plans.tests.factories import PlanFactory
+
+User = get_user_model()
 
 
 @pytest.fixture(autouse=True)
@@ -21,9 +31,20 @@ def clear_cache():
 
 
 @pytest.fixture
-def api_client():
-    """API client para testes."""
-    return APIClient()
+def customer_user(db):
+    """User customer válido — usado pelo `api_client` autenticado."""
+    return User.objects.create_user(
+        email="customer@example.com",
+        password="Senha-Forte-12345!",
+    )
+
+
+@pytest.fixture
+def api_client(customer_user):
+    """API client autenticado como customer (spec G2.a paywall)."""
+    client = APIClient()
+    client.force_authenticate(user=customer_user)
+    return client
 
 
 @pytest.fixture
@@ -296,20 +317,26 @@ class TestPedidoCreateRateLimit:
     """Testes de rate limiting para criação de pedidos."""
 
     def test_rate_limit_blocks_after_limit(self, api_client, valid_pedido_data):
-        """11ª request deve ser bloqueada por rate limit."""
+        """
+        11ª request deve ser bloqueada por `pedidos_create=10/min` (IP-scoped).
+
+        Cada request usa um email diferente pra evitar o `EmailScopedThrottle`
+        (5/hour por email) — isolando o teste no throttle de IP que o nome do
+        teste implica.
+        """
         url = reverse("pedido-create")
 
-        # Fazer 11 requests - a 11ª deve ser bloqueada
         for i in range(11):
-            response = api_client.post(url, valid_pedido_data, format="json")
+            # Email único por request — isola do EmailScopedThrottle.
+            payload = dict(valid_pedido_data)
+            payload["email"] = f"user{i}@example.com"
+            response = api_client.post(url, payload, format="json")
             if i < 10:
-                # Primeiras 10 devem passar
                 assert response.status_code in [
                     status.HTTP_201_CREATED,
                     status.HTTP_400_BAD_REQUEST,
                 ], f"Request {i+1} retornou {response.status_code} inesperado"
             else:
-                # 11ª deve ser bloqueada
                 assert (
                     response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
                 ), f"Request {i+1} deveria ser bloqueada, mas retornou {response.status_code}"

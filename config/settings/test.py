@@ -15,7 +15,7 @@ SECRET_KEY = env(
 TEST_RUNNER = "django.test.runner.DiscoverRunner"
 
 # Sinaliza explicitamente o contexto de teste (P-V3 wave 2). Substitui a
-# heurística frágil em `_is_testing` dos clientes Turnstile/Infosimples.
+# heurística frágil em `_is_testing` do TurnstileClient.
 TESTING = True
 
 # PASSWORDS

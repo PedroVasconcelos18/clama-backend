@@ -191,17 +191,6 @@ MSG_TELEFONE_INVALIDO = (
 # FREEMIUM (pedido gratuito)
 # =============================================================================
 
-# CPF/CNPJ inativo na Receita ou inexistente (resposta da Infosimples)
-MSG_FREEMIUM_DOCUMENTO_INATIVO = (
-    "Não conseguimos confirmar este CPF/CNPJ. Verifique e tente de novo."
-)
-
-# Falha ao consultar Infosimples (timeout, 5xx após retries)
-MSG_FREEMIUM_INFOSIMPLES_INDISPONIVEL = (
-    "Não conseguimos confirmar seus dados agora. "
-    "Tenta de novo em um minutinho?"
-)
-
 # OTP inválido ou expirado (TTL passou ou código não bate)
 MSG_FREEMIUM_OTP_INVALIDO = (
     "Código inválido ou expirado. Pede um novo código e tenta de novo."
@@ -222,4 +211,37 @@ MSG_FREEMIUM_BLACKLIST_HIT = (
 MSG_FREEMIUM_EMAIL_DESCARTAVEL = (
     "Use um e-mail principal para receber sua oração — "
     "e-mails temporários não funcionam aqui."
+)
+
+# User já tem conta criada (gate user-existence) — orienta pra fazer login.
+MSG_FREEMIUM_USER_JA_POSSUI_CONTA = (
+    "Você já tem conta com a gente. Faça login pra fazer um novo pedido."
+)
+
+# Pedido pendente aguardando confirmação por email — orienta a verificar email.
+MSG_FREEMIUM_PEDIDO_EM_ANDAMENTO = (
+    "Você já tem um pedido aguardando confirmação. Confira seu e-mail "
+    "para finalizar — se não achar, olha na aba de spam."
+)
+
+
+# =============================================================================
+# CUSTOMER AUTH (login do user freemium pós-G1)
+# =============================================================================
+
+# Credenciais inválidas no /api/customer/auth/login/. Mensagem idêntica para
+# email inexistente, senha errada e admin tentando logar (sem oracle de role).
+MSG_CUSTOMER_LOGIN_FALHOU = (
+    "E-mail ou senha não conferem. Tenta de novo."
+)
+
+# Senha trocada com sucesso no /change-password/.
+MSG_CUSTOMER_PASSWORD_TROCADA = (
+    "Senha atualizada com sucesso."
+)
+
+# 403 quando user logado tem force_change_password=True e tenta acessar
+# endpoint protegido (exceto /me/ e /change-password/).
+MSG_CUSTOMER_FORCE_CHANGE_PASSWORD = (
+    "Antes de continuar, atualize sua senha."
 )
