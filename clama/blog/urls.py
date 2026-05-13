@@ -4,6 +4,8 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    AdminBannedCustomersViewSet,
+    AdminCommentsViewSet,
     ComentarioListCreateView,
     ComentarioUpdateDestroyView,
     PostPublicViewSet,
@@ -15,6 +17,16 @@ router = DefaultRouter()
 router.register(r"blog/posts", PostViewSet, basename="blog-post")
 router.register(
     r"blog/public/posts", PostPublicViewSet, basename="blog-post-public"
+)
+router.register(
+    r"blog/admin/comments",
+    AdminCommentsViewSet,
+    basename="admin-blog-comment",
+)
+router.register(
+    r"blog/admin/banned-customers",
+    AdminBannedCustomersViewSet,
+    basename="admin-blog-ban",
 )
 
 urlpatterns = router.urls + [

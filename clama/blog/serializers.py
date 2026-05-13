@@ -8,7 +8,7 @@ mesmo se um caminho alternativo de escrita aparecer.
 
 from rest_framework import serializers
 
-from .models import Comentario, Post
+from .models import Comentario, CustomerBanido, Post
 from .sanitization import sanitize_post_html
 from .tiptap_converter import tiptap_json_to_html
 
@@ -244,5 +244,97 @@ class ComentarioSerializer(serializers.ModelSerializer):
                         "texto pra ser publicado."
                     ),
                 }
+            )
+        return value
+
+
+class AdminComentarioSerializer(serializers.ModelSerializer):
+    """Admin vê tudo: ip_address (decryptografado via ORM), customer email, etc."""
+
+    post_slug = serializers.CharField(source="post.slug", read_only=True)
+    post_titulo = serializers.CharField(source="post.titulo", read_only=True)
+    customer_email = serializers.EmailField(source="customer.email", read_only=True)
+    customer_nome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Comentario
+        fields = [
+            "id",
+            "post",
+            "post_slug",
+            "post_titulo",
+            "customer",
+            "customer_email",
+            "customer_nome",
+            "conteudo",
+            "is_suspeito",
+            "ip_address",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_customer_nome(self, obj: Comentario) -> str:
+        return _autor_nome_publico(obj.customer)
+
+
+class CustomerBanidoListSerializer(serializers.ModelSerializer):
+    customer_email = serializers.EmailField(source="customer.email", read_only=True)
+    customer_nome = serializers.SerializerMethodField()
+    banido_por_email = serializers.EmailField(
+        source="banido_por.email", read_only=True
+    )
+
+    class Meta:
+        model = CustomerBanido
+        fields = [
+            "id",
+            "customer",
+            "customer_email",
+            "customer_nome",
+            "motivo",
+            "banido_em",
+            "banido_por_email",
+            "revogado_em",
+        ]
+        read_only_fields = fields
+
+    def get_customer_nome(self, obj: CustomerBanido) -> str:
+        return _autor_nome_publico(obj.customer)
+
+
+class CustomerBanidoCreateSerializer(serializers.ModelSerializer):
+    """Admin cria banimento informando customer + motivo.
+
+    `banido_por` é injetado pela view do `request.user`. `customer_id` é
+    IntegerField porque `users.User.id` é BigAutoField (não UUID — clama não
+    tem model `Customer` separado).
+    """
+
+    customer_id = serializers.IntegerField(write_only=True)
+
+    class Meta:
+        model = CustomerBanido
+        fields = [
+            "id",
+            "customer_id",
+            "customer",
+            "motivo",
+            "banido_em",
+            "banido_por",
+            "revogado_em",
+        ]
+        read_only_fields = [
+            "id",
+            "customer",
+            "banido_em",
+            "banido_por",
+            "revogado_em",
+        ]
+
+    def validate_motivo(self, value: str) -> str:
+        if not value or len(value.strip()) < 3:
+            raise serializers.ValidationError(
+                "Informe um motivo para o banimento (≥3 caracteres)."
             )
         return value

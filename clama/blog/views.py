@@ -21,12 +21,16 @@ from rest_framework.response import Response
 
 from clama_backend.users.permissions import IsClamaAdmin
 
+from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
 
-from .models import Comentario, Post, PostStatus, Reacao, ReacaoTipo
+from .models import Comentario, CustomerBanido, Post, PostStatus, Reacao, ReacaoTipo
 from .permissions import IsCommentOwner, IsUnbannedCustomer
 from .serializers import (
+    AdminComentarioSerializer,
     ComentarioSerializer,
+    CustomerBanidoCreateSerializer,
+    CustomerBanidoListSerializer,
     PostCreateSerializer,
     PostDetailSerializer,
     PostListSerializer,
@@ -314,3 +318,91 @@ class ReacaoToggleView(APIView):
                 )
                 liked = True
         return Response({"liked": liked, "like_count": post.like_count})
+
+
+class AdminCommentsViewSet(viewsets.ModelViewSet):
+    """Admin lista/deleta qualquer comentário; filtra por suspeitos ou post."""
+
+    queryset = Comentario.objects.all().select_related("post", "customer")
+    serializer_class = AdminComentarioSerializer
+    permission_classes = [IsClamaAdmin]
+    pagination_class = BlogPostPagination
+    lookup_field = "id"
+    lookup_value_regex = "[0-9a-fA-F-]{36}"
+    http_method_names = ["get", "delete", "head", "options"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status_param = self.request.query_params.get("status")
+        if status_param == "suspeitos":
+            qs = qs.filter(is_suspeito=True)
+        post_slug = self.request.query_params.get("post")
+        if post_slug:
+            qs = qs.filter(post__slug=post_slug)
+        return qs.order_by("-created_at")
+
+
+class AdminBannedCustomersViewSet(viewsets.ModelViewSet):
+    """Admin gerencia banimentos ATIVOS — list, create (idempotente), destroy
+    (revoga por customer_id).
+    """
+
+    queryset = CustomerBanido.objects.filter(
+        revogado_em__isnull=True
+    ).select_related("customer", "banido_por")
+    permission_classes = [IsClamaAdmin]
+    pagination_class = BlogPostPagination
+    lookup_field = "customer_id"
+    # User.id é BigAutoField (inteiro), não UUID
+    lookup_value_regex = r"\d+"
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return CustomerBanidoCreateSerializer
+        return CustomerBanidoListSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        customer_id = serializer.validated_data["customer_id"]
+        motivo = serializer.validated_data["motivo"]
+        User = get_user_model()
+        try:
+            customer = User.objects.get(id=customer_id)
+        except User.DoesNotExist:
+            return Response(
+                {
+                    "code": "customer_nao_encontrado",
+                    "pastoral_message": "Customer não encontrado.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        # Idempotente: se já existe ban ativo, retorna o existente.
+        existing = CustomerBanido.objects.filter(
+            customer=customer, revogado_em__isnull=True
+        ).first()
+        if existing is not None:
+            return Response(
+                CustomerBanidoListSerializer(existing).data,
+                status=status.HTTP_200_OK,
+            )
+        ban = CustomerBanido.objects.create(
+            customer=customer, motivo=motivo, banido_por=request.user
+        )
+        return Response(
+            CustomerBanidoListSerializer(ban).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        customer_id = kwargs.get("customer_id")
+        ban = CustomerBanido.objects.filter(
+            customer_id=customer_id, revogado_em__isnull=True
+        ).first()
+        if ban is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        ban.revogado_em = timezone.now()
+        ban.revogado_por = request.user
+        ban.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
