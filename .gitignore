@@ -117,3 +117,8 @@ Thumbs.db
 # SQLite test/local databases
 *.db
 *.sqlite3
+
+# macOS Finder duplicates (Cmd+D, paste-with-conflict, iCloud sync)
+# Padrão: "arquivo 2.py", "arquivo 3.html", etc — espaço + número antes da extensão
+* [0-9].*
+* [0-9][0-9].*
