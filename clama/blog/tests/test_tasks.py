@@ -3,9 +3,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 from celery.exceptions import MaxRetriesExceededError
+from django.utils import timezone
 
-from clama.blog.tasks import notificar_indexnow, regenerar_blog_ssg
-from clama.blog.tests.factories import PostFactory
+from clama.blog.models import Comentario
+from clama.blog.tasks import (
+    enviar_alerta_comentarios_diario,
+    notificar_indexnow,
+    purgar_ips_antigos,
+    regenerar_blog_ssg,
+)
+from clama.blog.tests.factories import ComentarioFactory, PostFactory
 
 
 def _ok_response(status_code=200):
@@ -140,3 +147,94 @@ class TestNotificarIndexnowWithKey:
             notificar_indexnow(str(post.id))
         mock_retry.assert_called()
         mock_sentry.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestEnviarAlertaComentariosDiario:
+    def test_no_comments_skip(self, settings):
+        settings.ADMIN_ALERT_EMAIL = "admin@clama.test"
+        with patch("clama.blog.tasks.send_mail") as mock_send:
+            result = enviar_alerta_comentarios_diario()
+        assert result == {"n_novos": 0, "n_suspeitos": 0, "n_email_enviados": 0}
+        mock_send.assert_not_called()
+
+    def test_envia_email_com_comentarios_novos(self, settings):
+        settings.ADMIN_ALERT_EMAIL = "admin@clama.test"
+        ComentarioFactory(conteudo="Comentário limpo um")
+        ComentarioFactory(conteudo="Comentário limpo dois")
+        ComentarioFactory(conteudo="Comentário com merda nele")
+        with patch("clama.blog.tasks.send_mail") as mock_send:
+            result = enviar_alerta_comentarios_diario()
+        assert result["n_novos"] == 3
+        assert result["n_suspeitos"] == 1
+        assert result["n_email_enviados"] == 1
+        mock_send.assert_called_once()
+        call_kwargs = mock_send.call_args.kwargs
+        assert "3 novos" in call_kwargs["subject"]
+        assert "1 suspeitos" in call_kwargs["subject"]
+        assert call_kwargs["recipient_list"] == ["admin@clama.test"]
+
+    def test_old_comments_excluded(self, settings):
+        settings.ADMIN_ALERT_EMAIL = "admin@clama.test"
+        c = ComentarioFactory(conteudo="Antigo")
+        Comentario.objects.filter(id=c.id).update(
+            created_at=timezone.now() - timezone.timedelta(days=2)
+        )
+        with patch("clama.blog.tasks.send_mail") as mock_send:
+            result = enviar_alerta_comentarios_diario()
+        assert result["n_novos"] == 0
+        mock_send.assert_not_called()
+
+    def test_no_recipient_logs_warning(self, settings):
+        settings.ADMIN_ALERT_EMAIL = ""
+        ComentarioFactory()
+        with patch("clama.blog.tasks.send_mail") as mock_send:
+            result = enviar_alerta_comentarios_diario()
+        assert result["n_email_enviados"] == 0
+        mock_send.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestPurgarIpsAntigos:
+    def test_purga_apenas_acima_de_180d(self):
+        # Recente — deve ficar
+        recente = ComentarioFactory(ip_address="10.0.0.1")
+        # Antigo — deve ser zerado
+        antigo = ComentarioFactory(ip_address="10.0.0.2")
+        Comentario.objects.filter(id=antigo.id).update(
+            created_at=timezone.now() - timezone.timedelta(days=200)
+        )
+        # Também antigo mas sem IP — não toca
+        sem_ip = ComentarioFactory(ip_address="")
+        Comentario.objects.filter(id=sem_ip.id).update(
+            created_at=timezone.now() - timezone.timedelta(days=200)
+        )
+
+        result = purgar_ips_antigos()
+        assert result["n_purgados"] == 1
+
+        recente.refresh_from_db()
+        antigo.refresh_from_db()
+        sem_ip.refresh_from_db()
+        assert recente.ip_address == "10.0.0.1"
+        assert antigo.ip_address == ""
+        assert sem_ip.ip_address == ""
+
+    def test_no_old_comments_returns_zero(self):
+        ComentarioFactory(ip_address="10.0.0.1")
+        result = purgar_ips_antigos()
+        assert result["n_purgados"] == 0
+
+    def test_exato_180d_nao_purga(self):
+        # Boundary: cutoff é `now - 180d`. Comentário criado EXATAMENTE no
+        # cutoff não é purgado (filtro é `created_at__lt=cutoff`, strict less).
+        c = ComentarioFactory(ip_address="10.0.0.1")
+        # Setar created_at exatamente no cutoff (180d) — segundos podem variar
+        # então usamos 179d (claramente antes da janela): deve NÃO purgar.
+        Comentario.objects.filter(id=c.id).update(
+            created_at=timezone.now() - timezone.timedelta(days=179)
+        )
+        result = purgar_ips_antigos()
+        assert result["n_purgados"] == 0
+        c.refresh_from_db()
+        assert c.ip_address == "10.0.0.1"

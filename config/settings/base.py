@@ -328,6 +328,16 @@ CELERY_BEAT_SCHEDULE = {
         # uso atual; preferimos 6h pra detectar problema mais cedo.
         "schedule": crontab(minute=17, hour="*/6"),
     },
+    "blog-alerta-comentarios-diario": {
+        "task": "clama.blog.tasks.enviar_alerta_comentarios_diario",
+        # 08:00 BRT — admin lê com café da manhã.
+        "schedule": crontab(minute=0, hour=8),
+    },
+    "blog-purgar-ips-antigos": {
+        "task": "clama.blog.tasks.purgar_ips_antigos",
+        # 03:00 BRT — janela de baixo tráfego (LGPD compliance: IP > 180d).
+        "schedule": crontab(minute=0, hour=3),
+    },
 }
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#worker-send-task-events
 CELERY_WORKER_SEND_TASK_EVENTS = True

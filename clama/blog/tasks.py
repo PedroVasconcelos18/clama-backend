@@ -7,9 +7,14 @@ via Sentry.
 `notificar_indexnow` notifica search engines (IndexNow) com a URL canônica
 do post recém-publicado. Best-effort: falhas permanentes apenas logam
 warning (sem Sentry — IndexNow é tolerante a falhas, alertas seriam ruído).
+
+`enviar_alerta_comentarios_diario` (beat) — resumo diário pro admin.
+
+`purgar_ips_antigos` (beat) — limpa IPs > 180 dias (LGPD compliance).
 """
 
 import logging
+from datetime import timedelta
 from urllib.parse import urljoin
 
 import requests
@@ -17,12 +22,16 @@ import sentry_sdk
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 from django.conf import settings
+from django.core.mail import send_mail
+from django.utils import timezone
 
 logger = logging.getLogger("clama.blog.tasks")
 
 INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow"
 VERCEL_TIMEOUT_SECONDS = 30
 INDEXNOW_TIMEOUT_SECONDS = 10
+COMENTARIOS_DIARIO_LOOKBACK = timedelta(hours=24)
+IP_RETENTION_DAYS = 180
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -184,3 +193,111 @@ def notificar_indexnow(self, post_id: str) -> None:
                     "status_code": status_code,
                 },
             )
+
+
+@shared_task
+def enviar_alerta_comentarios_diario() -> dict:
+    """Envia email diário pro admin com resumo dos comentários das últimas 24h.
+
+    No-op se não há comentários novos (evita ruído no inbox do admin).
+    Comentários `is_suspeito=True` aparecem primeiro no resumo.
+    """
+    from .models import Comentario
+
+    cutoff = timezone.now() - COMENTARIOS_DIARIO_LOOKBACK
+    novos = list(
+        Comentario.objects.filter(created_at__gte=cutoff)
+        .select_related("post", "customer")
+        .order_by("-is_suspeito", "-created_at")
+    )
+    n_novos = len(novos)
+    n_suspeitos = sum(1 for c in novos if c.is_suspeito)
+
+    if n_novos == 0:
+        logger.info(
+            "alerta_comentarios_diario_skip",
+            extra={"event": "alerta_comentarios_diario_skip"},
+        )
+        return {"n_novos": 0, "n_suspeitos": 0, "n_email_enviados": 0}
+
+    admin_email = getattr(settings, "ADMIN_ALERT_EMAIL", "")
+    if not admin_email:
+        logger.warning(
+            "admin_alert_email_missing",
+            extra={"event": "alerta_comentarios_diario_no_recipient"},
+        )
+        return {
+            "n_novos": n_novos,
+            "n_suspeitos": n_suspeitos,
+            "n_email_enviados": 0,
+        }
+
+    subject = (
+        f"Resumo de comentários do blog ({n_novos} novos, "
+        f"{n_suspeitos} suspeitos)"
+    )
+    linhas = [
+        f"Resumo das últimas {COMENTARIOS_DIARIO_LOOKBACK.total_seconds() / 3600:.0f}h",
+        "",
+    ]
+    for c in novos:
+        flag = " [SUSPEITO]" if c.is_suspeito else ""
+        snippet = c.conteudo[:100] + ("…" if len(c.conteudo) > 100 else "")
+        linhas.append(
+            f"- /blog/{c.post.slug} | {c.customer.email}{flag}: {snippet}"
+        )
+    linhas.append("")
+    linhas.append("Modere em: /admin/blog/comentarios")
+    body = "\n".join(linhas)
+
+    send_mail(
+        subject=subject,
+        message=body,
+        from_email=None,  # usa DEFAULT_FROM_EMAIL
+        recipient_list=[admin_email],
+        fail_silently=False,
+    )
+    logger.info(
+        "alerta_comentarios_diario_sent",
+        extra={
+            "event": "alerta_comentarios_diario_sent",
+            "n_novos": n_novos,
+            "n_suspeitos": n_suspeitos,
+        },
+    )
+    return {
+        "n_novos": n_novos,
+        "n_suspeitos": n_suspeitos,
+        "n_email_enviados": 1,
+    }
+
+
+@shared_task
+def purgar_ips_antigos() -> dict:
+    """Zera `ip_address` de comentários com `created_at < now - 180 dias`.
+
+    LGPD/Marco Civil: IP é necessário por 6 meses pra rastreabilidade,
+    após isso vira lixo (não-essencial pra moderação). Zerar em vez de
+    deletar comentário preserva o histórico da conversa.
+    """
+    from .models import Comentario
+
+    cutoff = timezone.now() - timedelta(days=IP_RETENTION_DAYS)
+    # NOTA: `ip_address` é EncryptedCharField — `.exclude(ip_address="")` no
+    # ORM não funciona porque compara contra blob encriptado. Iteramos em
+    # Python pra contar/purgar apenas os realmente preenchidos. Volume é
+    # tipicamente pequeno (varredura diária; 6+ meses de dados raramente
+    # chega na ordem de 10k+ por tenant).
+    n_purgados = 0
+    candidatos = Comentario.objects.filter(created_at__lt=cutoff).only(
+        "id", "ip_address"
+    )
+    for c in candidatos:
+        if c.ip_address:
+            Comentario.objects.filter(id=c.id).update(ip_address="")
+            n_purgados += 1
+    logger.info(
+        "purgar_ips_antigos_done",
+        extra={"event": "purgar_ips_antigos", "n_purgados": n_purgados},
+    )
+    return {"n_purgados": n_purgados}
