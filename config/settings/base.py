@@ -147,6 +147,10 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Marca request.is_build_token quando Vike (Vercel build) envia
+    # X-Build-Token matching BUILD_API_TOKEN — usado pra bypass de
+    # restrições externas em staging. Em prod é no-op.
+    "clama.blog.middleware.BuildTokenAuthMiddleware",
 ]
 
 # CORS
@@ -471,6 +475,11 @@ FRONTEND_PUBLIC_BLOG_BASE_URL = env(
     "FRONTEND_PUBLIC_BLOG_BASE_URL",
     default="https://clama.me",
 )
+
+# Token compartilhado entre Vercel build (Vike) e backend pra autorizar
+# fetch de endpoints públicos em staging com IP allowlist. Em prod fica
+# vazio (API pública sem restrição). Middleware: `BuildTokenAuthMiddleware`.
+BUILD_API_TOKEN = env("BUILD_API_TOKEN", default="")
 
 # Anthropic (Claude API)
 # -------------------------------------------------------------------------------
