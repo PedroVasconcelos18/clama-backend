@@ -1,9 +1,14 @@
 import pytest
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.utils import timezone
 
-from clama.blog.models import Post, PostStatus
-from clama.blog.tests.factories import PostFactory
+from clama.blog.models import Comentario, Post, PostStatus, Reacao, ReacaoTipo
+from clama.blog.tests.factories import (
+    BlogCustomerFactory,
+    ComentarioFactory,
+    PostFactory,
+    ReacaoFactory,
+)
 
 
 @pytest.mark.django_db
@@ -113,3 +118,89 @@ class TestPostSaveSanitization:
         post = PostFactory(conteudo_html="")
         post.refresh_from_db()
         assert post.conteudo_html == ""
+
+
+@pytest.mark.django_db
+class TestComentarioModel:
+    def test_create_via_factory(self):
+        c = ComentarioFactory()
+        assert c.pk is not None
+        assert c.conteudo
+        assert c.post_id is not None
+        assert c.customer_id is not None
+
+    def test_default_is_suspeito_false(self):
+        c = ComentarioFactory()
+        assert c.is_suspeito is False
+
+    def test_cascade_delete_when_post_deleted(self):
+        post = PostFactory()
+        ComentarioFactory(post=post)
+        ComentarioFactory(post=post)
+        assert Comentario.objects.filter(post=post).count() == 2
+        post.delete()
+        assert Comentario.objects.filter(post_id=post.id).count() == 0
+
+    def test_str_truncates_conteudo(self):
+        c = ComentarioFactory(conteudo="A" * 80)
+        s = str(c)
+        assert c.customer.email in s
+        # conteúdo truncado em 50 chars
+        assert "A" * 50 in s
+        assert "A" * 51 not in s
+
+    def test_ip_address_encrypted_at_rest(self):
+        plain_ip = "203.0.113.42"
+        ComentarioFactory(ip_address=plain_ip)
+        # Query raw SQL pra verificar que o valor armazenado NÃO contém o IP plain
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT ip_address FROM blog_comentario")
+            stored = cursor.fetchone()[0]
+        # O valor encriptado nunca contém o IP plain literal
+        assert plain_ip not in str(stored)
+        # Mas via ORM, decripta corretamente
+        c = Comentario.objects.first()
+        assert c.ip_address == plain_ip
+
+    def test_post_has_comment_count_property(self):
+        post = PostFactory()
+        assert post.comment_count == 0
+        ComentarioFactory(post=post)
+        ComentarioFactory(post=post)
+        assert post.comment_count == 2
+
+
+@pytest.mark.django_db
+class TestReacaoModel:
+    def test_create_via_factory(self):
+        r = ReacaoFactory()
+        assert r.pk is not None
+        assert r.tipo == ReacaoTipo.LIKE
+
+    def test_default_tipo_is_like(self):
+        post = PostFactory()
+        customer = BlogCustomerFactory()
+        r = Reacao.objects.create(post=post, customer=customer)
+        assert r.tipo == ReacaoTipo.LIKE
+
+    def test_unique_constraint_post_customer_tipo(self):
+        post = PostFactory()
+        customer = BlogCustomerFactory()
+        ReacaoFactory(post=post, customer=customer, tipo=ReacaoTipo.LIKE)
+        with pytest.raises(IntegrityError):
+            ReacaoFactory(post=post, customer=customer, tipo=ReacaoTipo.LIKE)
+
+    def test_post_has_like_count_property(self):
+        post = PostFactory()
+        assert post.like_count == 0
+        ReacaoFactory(post=post)
+        ReacaoFactory(post=post)
+        ReacaoFactory(post=post)
+        assert post.like_count == 3
+
+    def test_cascade_delete_when_post_deleted(self):
+        post = PostFactory()
+        ReacaoFactory(post=post)
+        ReacaoFactory(post=post)
+        post.delete()
+        assert Reacao.objects.filter(post_id=post.id).count() == 0

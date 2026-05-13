@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Post
+from .models import Comentario, Post, Reacao
 
 
 @admin.register(Post)
@@ -55,3 +55,37 @@ class PostAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+
+@admin.register(Comentario)
+class ComentarioAdmin(admin.ModelAdmin):
+    list_display = ("customer", "post", "is_suspeito", "created_at")
+    list_filter = ("is_suspeito",)
+    search_fields = ("conteudo", "customer__email", "post__slug")
+    readonly_fields = ("id", "ip_address", "created_at", "updated_at")
+    ordering = ("-created_at",)
+    date_hierarchy = "created_at"
+    fieldsets = (
+        ("Identificação", {"fields": ("id", "post", "customer")}),
+        ("Conteúdo", {"fields": ("conteudo",)}),
+        (
+            "Moderação",
+            {"fields": ("is_suspeito", "ip_address")},
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+
+@admin.register(Reacao)
+class ReacaoAdmin(admin.ModelAdmin):
+    list_display = ("customer", "post", "tipo", "created_at")
+    list_filter = ("tipo",)
+    search_fields = ("customer__email", "post__slug")
+    readonly_fields = ("id", "created_at", "updated_at")
+    ordering = ("-created_at",)

@@ -3,6 +3,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from encrypted_model_fields.fields import EncryptedCharField
 
 from clama.core.models import TimestampedModel
 
@@ -59,6 +60,14 @@ class Post(TimestampedModel):
         self.conteudo_html = sanitize_post_html(self.conteudo_html or "")
         super().save(*args, **kwargs)
 
+    @property
+    def comment_count(self) -> int:
+        return self.comentarios.count()
+
+    @property
+    def like_count(self) -> int:
+        return self.reacoes.filter(tipo=ReacaoTipo.LIKE).count()
+
     def transitar_para(self, novo_status: str) -> None:
         """Transita o status do post validando a maquina de estados.
 
@@ -77,3 +86,73 @@ class Post(TimestampedModel):
             self.data_publicacao = timezone.now()
         self.status = novo_status
         self.save()
+
+
+class ReacaoTipo(models.TextChoices):
+    LIKE = "like", "Like"
+    # DISLIKE = "dislike", "Dislike"  # reservado pra Growth pós-MVP
+
+
+class Comentario(TimestampedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    post = models.ForeignKey(
+        Post, on_delete=models.CASCADE, related_name="comentarios"
+    )
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="comentarios_blog",
+    )
+    conteudo = models.TextField(max_length=2000)
+    ip_address = EncryptedCharField(max_length=45, blank=True, default="")
+    is_suspeito = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Comentário"
+        verbose_name_plural = "Comentários"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["post", "-created_at"],
+                name="idx_blog_comentario_post_crtd",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.customer.email}: {self.conteudo[:50]}"
+
+
+class Reacao(TimestampedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    post = models.ForeignKey(
+        Post, on_delete=models.CASCADE, related_name="reacoes"
+    )
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="reacoes_blog",
+    )
+    tipo = models.CharField(
+        max_length=20,
+        choices=ReacaoTipo.choices,
+        default=ReacaoTipo.LIKE,
+    )
+
+    class Meta:
+        verbose_name = "Reação"
+        verbose_name_plural = "Reações"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["post", "customer", "tipo"],
+                name="uniq_blog_reacao_post_customer_tipo",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["post", "tipo"], name="idx_blog_reacao_post_tipo"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.customer.email} {self.tipo} {self.post.slug}"
