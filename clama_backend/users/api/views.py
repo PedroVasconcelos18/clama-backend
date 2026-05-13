@@ -333,3 +333,28 @@ class CustomerMeView(APIView):
     def get(self, request, *args, **kwargs):
         serializer = CustomerUserSerializer(request.user)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        tags=["Customer / Auth"],
+        summary="Atualiza preferências do customer (nome_format_blog)",
+        request=CustomerUserSerializer,
+        responses={
+            200: OpenApiResponse(response=CustomerUserSerializer),
+            400: OpenApiResponse(description="Validação falhou"),
+            401: OpenApiResponse(description="Não autenticado"),
+        },
+    )
+    def patch(self, request, *args, **kwargs):
+        """Atualiza preferências editáveis pelo customer.
+
+        Whitelist via `read_only_fields` no serializer: apenas
+        `nome_format_blog` é writable. Outros fields (email,
+        nome_completo, etc.) são ignorados silenciosamente — não há
+        edição parcial fora do escopo permitido.
+        """
+        serializer = CustomerUserSerializer(
+            instance=request.user, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)

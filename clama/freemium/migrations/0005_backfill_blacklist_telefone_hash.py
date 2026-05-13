@@ -25,8 +25,14 @@ def backfill_telefone_hash(apps, schema_editor):
 
     # Itera users que consumiram freemium (têm pedido gratuito). Para cada,
     # pega o telefone do pedido gratuito mais antigo (proxy do que foi
-    # submetido na saga).
-    users_freemium = User.objects.filter(pedidos__eh_gratuito=True).distinct()
+    # submetido na saga). `.only(...)` limita o SELECT pra não referenciar
+    # colunas adicionadas em migrations futuras (LayoutDB seguro durante
+    # re-run da chain em test DB).
+    users_freemium = (
+        User.objects.filter(pedidos__eh_gratuito=True)
+        .only("id", "cpf_cnpj")
+        .distinct()
+    )
     for user in users_freemium:
         pedido = (
             user.pedidos.filter(eh_gratuito=True)

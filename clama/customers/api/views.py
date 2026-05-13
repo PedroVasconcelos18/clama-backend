@@ -193,10 +193,14 @@ class ChangePasswordView(APIView):
 
 class CustomerMeView(APIView):
     """
-    GET /api/customer/me/
+    GET /api/customer/me/      — retorna dados do user autenticado.
+    PATCH /api/customer/me/    — atualiza preferências editáveis pelo customer
+                                 (apenas `nome_format_blog` no MVP; outros
+                                 campos são read-only via whitelist do
+                                 serializer).
 
-    Retorna dados do user autenticado. Sem `IsCustomerPasswordCurrent`
-    (user precisa poder ler próprio estado mesmo com `force_change_password=True`).
+    Sem `IsCustomerPasswordCurrent` (user precisa poder ler/editar próprio
+    estado mesmo com `force_change_password=True`).
     """
 
     permission_classes = [IsAuthenticated]
@@ -209,6 +213,20 @@ class CustomerMeView(APIView):
     def get(self, request, *args, **kwargs):
         data = CustomerUserSerializer(request.user).data
         return Response(data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        tags=["Customer"],
+        summary="Atualiza preferências do customer (nome_format_blog)",
+        request=CustomerUserSerializer,
+        responses={200: CustomerUserSerializer},
+    )
+    def patch(self, request, *args, **kwargs):
+        serializer = CustomerUserSerializer(
+            instance=request.user, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class CustomerPedidosListView(ListAPIView):

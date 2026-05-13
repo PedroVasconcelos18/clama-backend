@@ -22,12 +22,25 @@ def _autor_nome(user) -> str:
 def _autor_nome_publico(user) -> str:
     """Nome do autor para exposição pública.
 
-    Fallback para 'Pedro' se autor sem `nome_completo` — endpoint público
-    NÃO expõe email do autor.
+    Honra `user.nome_format_blog` (FR32):
+    - "completo" → "Juliana Silva" (intacto)
+    - "compacto" (default) → "Juliana S." (primeiro nome + inicial)
+
+    Fallback para 'Pedro' se autor None ou sem `nome_completo` — endpoint
+    público NUNCA expõe email do autor.
     """
     if user is None:
         return "Pedro"
-    return user.nome_completo or "Pedro"
+    nome = (user.nome_completo or "").strip()
+    if not nome:
+        return "Pedro"
+    fmt = getattr(user, "nome_format_blog", "compacto")
+    if fmt == "completo":
+        return nome
+    parts = nome.split()
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[0]} {parts[-1][0]}."
 
 
 class PostListSerializer(serializers.ModelSerializer):

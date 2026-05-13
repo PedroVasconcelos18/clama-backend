@@ -147,8 +147,12 @@ class TestAutorNomeFallback:
         assert response.json()["autor_nome"] == "Pedro"
 
     def test_uses_nome_completo_when_set(self):
+        # Após Story 4.10, default `nome_format_blog="compacto"`. Para obter
+        # o nome completo na resposta, autor precisa ter pref COMPLETO.
         autor = BlogUserFactory(
-            email="pedro@clama.me", nome_completo="Pedro Pastor"
+            email="pedro@clama.me",
+            nome_completo="Pedro Pastor",
+            nome_format_blog="completo",
         )
         _make_publicado(slug="post-2", autor=autor)
         client = APIClient()

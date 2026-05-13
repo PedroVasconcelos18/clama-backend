@@ -3,6 +3,13 @@ from django.db import models
 from encrypted_model_fields.fields import EncryptedCharField
 
 
+class NomeFormatBlog(models.TextChoices):
+    """Como o nome do customer aparece em comentários/likes do blog (FR32)."""
+
+    COMPLETO = "completo", "Nome completo (Juliana Silva)"
+    COMPACTO = "compacto", "Primeiro nome + inicial (Juliana S.)"
+
+
 class UserManager(BaseUserManager):
     """
     Manager customizado para User com métodos de conveniência.
@@ -96,6 +103,15 @@ class User(AbstractUser):
         "Forçar troca de senha",
         default=False,
         help_text="Indica que o usuário deve trocar a senha no próximo login.",
+    )
+
+    # Formato do nome em comentários/likes do blog (FR32). Default compacto
+    # é privacy-friendly: "Juliana S." em vez de "Juliana Silva" completo.
+    nome_format_blog = models.CharField(
+        "Formato do nome no blog",
+        max_length=20,
+        choices=NomeFormatBlog.choices,
+        default=NomeFormatBlog.COMPACTO,
     )
 
     # Hashes determinísticos (HMAC-SHA-256 via FREEMIUM_HASH_SECRET) para

@@ -64,12 +64,13 @@ class AdminTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class CustomerUserSerializer(serializers.ModelSerializer):
     """
-    Serializer público dos dados do customer. Tudo read-only — payload
-    consumido por `/customer/auth/login/`, `/customer/me/` e
+    Serializer público dos dados do customer. Payload consumido por
+    `/customer/auth/login/`, `/customer/me/` (GET + PATCH) e
     `/customer/auth/change-password/`.
 
-    Mantemos o set de campos enxuto (frozen line "Ask First" da spec):
-    `id, email, nome_completo, force_change_password, freemium_used_at`.
+    `nome_format_blog` é o único campo EDITÁVEL via PATCH /me/ (FR32 —
+    customer escolhe entre 'completo'/'compacto' para o nome em
+    comentários/likes do blog).
     """
 
     class Meta:
@@ -80,8 +81,15 @@ class CustomerUserSerializer(serializers.ModelSerializer):
             "nome_completo",
             "force_change_password",
             "freemium_used_at",
+            "nome_format_blog",
         ]
-        read_only_fields = fields
+        read_only_fields = [
+            "id",
+            "email",
+            "nome_completo",
+            "force_change_password",
+            "freemium_used_at",
+        ]
 
 
 class CustomerTokenObtainPairSerializer(TokenObtainPairSerializer):

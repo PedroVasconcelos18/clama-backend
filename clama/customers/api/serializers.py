@@ -40,7 +40,11 @@ class CustomerLoginInvalidoError(PastoralAPIException):
 
 
 class CustomerUserSerializer(serializers.ModelSerializer):
-    """Subset do User retornado por login/refresh/me."""
+    """Subset do User retornado por login/refresh/me.
+
+    `nome_format_blog` é o único campo editável via PATCH /me/ (FR32 —
+    customer escolhe entre 'completo' e 'compacto').
+    """
 
     class Meta:
         model = User
@@ -50,8 +54,15 @@ class CustomerUserSerializer(serializers.ModelSerializer):
             "nome_completo",
             "force_change_password",
             "freemium_used_at",
+            "nome_format_blog",
         ]
-        read_only_fields = fields
+        read_only_fields = [
+            "id",
+            "email",
+            "nome_completo",
+            "force_change_password",
+            "freemium_used_at",
+        ]
 
 
 class CustomerTokenObtainPairSerializer(TokenObtainPairSerializer):
