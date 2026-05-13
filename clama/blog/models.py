@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from clama.core.models import TimestampedModel
 
@@ -57,3 +58,22 @@ class Post(TimestampedModel):
     def save(self, *args, **kwargs):
         self.conteudo_html = sanitize_post_html(self.conteudo_html or "")
         super().save(*args, **kwargs)
+
+    def transitar_para(self, novo_status: str) -> None:
+        """Transita o status do post validando a maquina de estados.
+
+        Estados validos: rascunho <-> publicado. Tentar outro estado raise
+        ValueError. Transicionar para o mesmo status e no-op (nao salva).
+
+        Quando transitando para PUBLICADO E data_publicacao ainda nao foi
+        setada, registra agora como data de primeira publicacao. Re-publicar
+        depois preserva a data original (referencia historica).
+        """
+        if novo_status not in PostStatus.values:
+            raise ValueError(f"Status invalido: {novo_status!r}")
+        if self.status == novo_status:
+            return
+        if novo_status == PostStatus.PUBLICADO and self.data_publicacao is None:
+            self.data_publicacao = timezone.now()
+        self.status = novo_status
+        self.save()
