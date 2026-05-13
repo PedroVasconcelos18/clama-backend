@@ -103,6 +103,8 @@ class TurnstileClient:
         duration_ms: float,
         success: bool | None,
         error: str | None = None,
+        error_codes: list[str] | None = None,
+        hostname: str | None = None,
     ) -> None:
         log_data: dict[str, Any] = {
             "event": "turnstile_request",
@@ -113,6 +115,16 @@ class TurnstileClient:
         }
         if error:
             log_data["error"] = error
+        if error_codes:
+            # `error-codes` da Cloudflare (lista de strings). Exemplos:
+            # invalid-input-response, timeout-or-duplicate, invalid-input-secret.
+            # Doc: https://developers.cloudflare.com/turnstile/get-started/server-side-validation/#error-codes
+            log_data["cf_error_codes"] = error_codes
+        if hostname:
+            # `hostname` retornado pela Cloudflare = domínio onde o widget
+            # rodou. Útil pra diagnosticar mismatch de site_key (ex: site_key
+            # cadastrada pra clama.me mas widget montado em localhost).
+            log_data["cf_hostname"] = hostname
         if error or (status and status >= 400) or success is False:
             logger.warning("Turnstile request failed", extra=log_data)
         else:
@@ -167,14 +179,28 @@ class TurnstileClient:
         )
         duration_ms = (time.time() - start_time) * 1000
 
-        # 5xx é retentado pelo decorator; 4xx propaga para a view tratar.
-        response.raise_for_status()
+        # Tenta parsear body MESMO em 4xx — Cloudflare retorna error-codes
+        # úteis em 400 (secret malformado, payload inválido). Sem isso, o
+        # `raise_for_status()` esconde o motivo real.
+        body: dict[str, Any] = {}
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001
+            pass
 
-        body = response.json()
+        error_codes = body.get("error-codes") or []
+        hostname = body.get("hostname")
         success = bool(body.get("success", False))
+
         self._log(
             status=response.status_code,
             duration_ms=duration_ms,
             success=success,
+            error_codes=error_codes if isinstance(error_codes, list) else None,
+            hostname=hostname if isinstance(hostname, str) else None,
         )
+
+        # 5xx é retentado pelo decorator; 4xx propaga para a view tratar.
+        response.raise_for_status()
+
         return success
