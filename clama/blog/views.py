@@ -9,6 +9,7 @@ from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from clama_backend.users.permissions import IsClamaAdmin
@@ -18,6 +19,8 @@ from .serializers import (
     PostCreateSerializer,
     PostDetailSerializer,
     PostListSerializer,
+    PostPublicListSerializer,
+    PostPublicSerializer,
 )
 
 
@@ -81,3 +84,36 @@ class PostViewSet(viewsets.ModelViewSet):
                 "message": "Post despublicado — propagação em ~3 minutos",
             }
         )
+
+
+class BlogPublicPagination(PageNumberPagination):
+    page_size = 12
+    page_size_query_param = "page_size"
+    max_page_size = 50
+
+
+class PostPublicViewSet(viewsets.ReadOnlyModelViewSet):
+    """Endpoints públicos de leitura do blog (sem auth).
+
+    Apenas posts com `status=PUBLICADO` aparecem. lookup por slug.
+    Frontend Vike SSG consome esses endpoints no build pra prerender.
+    """
+
+    queryset = Post.objects.publicados()
+    lookup_field = "slug"
+    lookup_value_regex = r"[-\w]+"
+    permission_classes = [AllowAny]
+    pagination_class = BlogPublicPagination
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return PostPublicListSerializer
+        return PostPublicSerializer
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        # Hint pro CDN/browser cachearem 5min — Vercel SSG faz o trabalho
+        # pesado; este header reduz pressão em casos de bypass do edge cache.
+        if request.method in ("GET", "HEAD"):
+            response["Cache-Control"] = "public, max-age=300"
+        return response

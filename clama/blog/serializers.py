@@ -19,6 +19,17 @@ def _autor_nome(user) -> str:
     return user.nome_completo or user.email
 
 
+def _autor_nome_publico(user) -> str:
+    """Nome do autor para exposição pública.
+
+    Fallback para 'Pedro' se autor sem `nome_completo` — endpoint público
+    NÃO expõe email do autor.
+    """
+    if user is None:
+        return "Pedro"
+    return user.nome_completo or "Pedro"
+
+
 class PostListSerializer(serializers.ModelSerializer):
     """Serializer leve para listagens admin — NÃO expõe conteúdo pesado."""
 
@@ -138,3 +149,58 @@ class PostCreateSerializer(serializers.ModelSerializer):
         if "conteudo_tiptap_json" in validated_data:
             validated_data["conteudo_html"] = self._sanitized_html or ""
         return super().update(instance, validated_data)
+
+
+class PostPublicListSerializer(serializers.ModelSerializer):
+    """Serializer público para listagens (sem conteudo_html)."""
+
+    autor_nome = serializers.SerializerMethodField()
+    like_count = serializers.IntegerField(read_only=True)
+    comment_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Post
+        fields = [
+            "slug",
+            "titulo",
+            "excerpt",
+            "imagem_capa_url",
+            "data_publicacao",
+            "historia_ilustrativa",
+            "autor_nome",
+            "like_count",
+            "comment_count",
+        ]
+        read_only_fields = fields
+
+    def get_autor_nome(self, obj: Post) -> str:
+        return _autor_nome_publico(obj.autor)
+
+
+class PostPublicSerializer(serializers.ModelSerializer):
+    """Serializer público para detalhe (com conteudo_html)."""
+
+    autor_nome = serializers.SerializerMethodField()
+    like_count = serializers.IntegerField(read_only=True)
+    comment_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Post
+        fields = [
+            "slug",
+            "titulo",
+            "conteudo_html",
+            "excerpt",
+            "meta_title",
+            "meta_description",
+            "imagem_capa_url",
+            "data_publicacao",
+            "historia_ilustrativa",
+            "autor_nome",
+            "like_count",
+            "comment_count",
+        ]
+        read_only_fields = fields
+
+    def get_autor_nome(self, obj: Post) -> str:
+        return _autor_nome_publico(obj.autor)
