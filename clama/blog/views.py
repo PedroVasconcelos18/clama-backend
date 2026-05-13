@@ -4,24 +4,42 @@
 viram em stories futuras (3.1) e ficarão em outra view com `AllowAny`.
 """
 
+from datetime import timedelta
+
 from django.db import transaction
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 from drf_spectacular.utils import OpenApiResponse, extend_schema
-from rest_framework import viewsets
+from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from clama_backend.users.permissions import IsClamaAdmin
 
-from .models import Post, PostStatus
+from .models import Comentario, Post, PostStatus
+from .permissions import IsCommentOwner, IsUnbannedCustomer
 from .serializers import (
+    ComentarioSerializer,
     PostCreateSerializer,
     PostDetailSerializer,
     PostListSerializer,
     PostPublicListSerializer,
     PostPublicSerializer,
 )
+
+COMENTARIO_EDIT_WINDOW = timedelta(minutes=15)
+
+
+def _client_ip(request) -> str:
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "")
 
 
 class BlogPostPagination(PageNumberPagination):
@@ -117,3 +135,115 @@ class PostPublicViewSet(viewsets.ReadOnlyModelViewSet):
         if request.method in ("GET", "HEAD"):
             response["Cache-Control"] = "public, max-age=300"
         return response
+
+
+@method_decorator(
+    ratelimit(key="user", rate="5/m", method="POST", block=False),
+    name="post",
+)
+class ComentarioListCreateView(generics.ListCreateAPIView):
+    """Lista comentários públicos do post e permite customer criar.
+
+    GET: AllowAny, cache 10s.
+    POST: IsUnbannedCustomer, rate-limited 5/min/user, IP capturado.
+    """
+
+    serializer_class = ComentarioSerializer
+    pagination_class = BlogPostPagination
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsUnbannedCustomer()]
+        return [AllowAny()]
+
+    def get_post(self) -> Post:
+        return get_object_or_404(
+            Post, slug=self.kwargs["slug"], status=PostStatus.PUBLICADO
+        )
+
+    def get_queryset(self):
+        post = self.get_post()
+        return Comentario.objects.filter(post=post)
+
+    def perform_create(self, serializer):
+        if getattr(self.request, "limited", False):
+            # Sinaliza pro `create()` retornar 429
+            self._rate_limited = True
+            return
+        post = self.get_post()
+        serializer.save(
+            post=post,
+            customer=self.request.user,
+            ip_address=_client_ip(self.request),
+        )
+
+    def create(self, request, *args, **kwargs):
+        # Pre-validate, then check rate limit BEFORE saving — devolve mensagem
+        # pastoral em 429 em vez do default do django-ratelimit.
+        if getattr(request, "limited", False):
+            return Response(
+                {
+                    "code": "rate_limit_exceeded",
+                    "pastoral_message": (
+                        "Calma! Aguarde um momento antes de comentar de novo."
+                    ),
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        return super().create(request, *args, **kwargs)
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if request.method in ("GET", "HEAD"):
+            response["Cache-Control"] = "public, max-age=10"
+        return response
+
+
+class ComentarioUpdateDestroyView(
+    generics.RetrieveUpdateDestroyAPIView
+):
+    """PATCH/DELETE de comentário individual.
+
+    PATCH: owner only, dentro de 15min da criação.
+    DELETE: owner OR admin clama.
+    """
+
+    queryset = Comentario.objects.all()
+    serializer_class = ComentarioSerializer
+    lookup_field = "id"
+    lookup_value_regex = "[0-9a-fA-F-]{36}"
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["patch", "delete", "head", "options", "get"]
+
+    def get_object(self):
+        obj = super().get_object()
+        # Para DELETE, admin tem override; para PATCH, apenas owner.
+        if self.request.method == "DELETE":
+            is_owner = obj.customer_id == self.request.user.id
+            is_admin = getattr(self.request.user, "is_clama_admin", False)
+            if not (is_owner or is_admin):
+                raise PermissionDenied(detail="Sem permissão para apagar.")
+        else:
+            # PATCH/GET — apenas owner
+            if obj.customer_id != self.request.user.id:
+                raise PermissionDenied(detail="Sem permissão para editar.")
+        return obj
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        age = timezone.now() - instance.created_at
+        if age > COMENTARIO_EDIT_WINDOW:
+            raise serializers_validation_error(
+                "comentario_muito_antigo",
+                "Esse comentário foi escrito há mais de 15 minutos e "
+                "não pode mais ser editado.",
+            )
+        serializer.save()
+
+
+def serializers_validation_error(code: str, message: str):
+    from rest_framework.exceptions import ValidationError
+
+    return ValidationError(
+        {"code": code, "pastoral_message": message}
+    )

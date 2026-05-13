@@ -8,7 +8,7 @@ mesmo se um caminho alternativo de escrita aparecer.
 
 from rest_framework import serializers
 
-from .models import Post
+from .models import Comentario, Post
 from .sanitization import sanitize_post_html
 from .tiptap_converter import tiptap_json_to_html
 
@@ -204,3 +204,45 @@ class PostPublicSerializer(serializers.ModelSerializer):
 
     def get_autor_nome(self, obj: Post) -> str:
         return _autor_nome_publico(obj.autor)
+
+
+class ComentarioSerializer(serializers.ModelSerializer):
+    """Serializer público de comentários — não expõe email/IP."""
+
+    customer_nome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Comentario
+        fields = [
+            "id",
+            "post",
+            "customer",
+            "customer_nome",
+            "conteudo",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "post",
+            "customer",
+            "customer_nome",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_customer_nome(self, obj: Comentario) -> str:
+        return _autor_nome_publico(obj.customer)
+
+    def validate_conteudo(self, value: str) -> str:
+        if not value or len(value.strip()) < 3:
+            raise serializers.ValidationError(
+                {
+                    "code": "comentario_invalido",
+                    "pastoral_message": (
+                        "Esse comentário precisa de um pouquinho mais de "
+                        "texto pra ser publicado."
+                    ),
+                }
+            )
+        return value
