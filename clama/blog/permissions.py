@@ -1,40 +1,65 @@
 """Permission classes do app blog.
 
-`IsUnbannedCustomer` — usar SEMPRE em endpoints customer (em vez de
-`IsAuthenticated` cru). Versão básica desta story apenas checa autenticação;
-a versão completa (que verifica `CustomerBanido`) virá na Story 5.2 quando
-o model `CustomerBanido` existir (Story 5.1).
+`IsUnbannedCustomer` (versão completa após Story 5.1) — usar SEMPRE em
+endpoints customer (em vez de `IsAuthenticated` cru). Levanta 403 com
+mensagem pastoral se o customer tem banimento ativo.
 
 `IsCommentOwner` — permite operações object-level apenas pro dono do
 comentário (PATCH/DELETE em /api/blog/comments/<id>/).
 """
 
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
 
 class IsUnbannedCustomer(BasePermission):
-    """Customer autenticado e não-banido (versão básica).
+    """Customer autenticado e não-banido.
 
-    NOTA: esta versão NÃO checa banimento ainda — o model `CustomerBanido`
-    será criado na Story 5.1 e esta classe será substituída pela versão
-    completa na Story 5.2. Usar essa permission desde já garante que o
-    upgrade não exija mudar callsite das ViewSets nas Stories 4.3 / 4.4.
+    - Anônimo → False (vira 401/403 default do DRF).
+    - Admin (`is_clama_admin=True`) → True sem checar ban (admins moderam,
+      não são moderados; edge-case: mesmo se houver registro de
+      CustomerBanido, admin não é bloqueado pra que não fique trancado fora
+      da própria função de moderação).
+    - Customer com banimento ativo → levanta `PermissionDenied(403)` com
+      `code=customer_banido` + `pastoral_message`.
+    - Customer sem banimento ativo (ou com `revogado_em` setado) → True.
     """
 
     def has_permission(self, request, view) -> bool:
-        return bool(request.user and request.user.is_authenticated)
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        # Admin tem caminho próprio (IsClamaAdmin); aqui só não bloqueamos.
+        if getattr(user, "is_clama_admin", False):
+            return True
+        # Lazy import pra evitar circular import: models -> permissions
+        # (via apps.ready chain).
+        from .models import CustomerBanido
+
+        is_banido = CustomerBanido.objects.filter(
+            customer=user, revogado_em__isnull=True
+        ).exists()
+        if is_banido:
+            raise PermissionDenied(
+                detail={
+                    "code": "customer_banido",
+                    "pastoral_message": (
+                        "Sua conta foi suspensa do sistema de comentários. "
+                        "Entre em contato pelo nosso e-mail de suporte se "
+                        "quiser entender o motivo."
+                    ),
+                }
+            )
+        return True
 
 
 class IsCommentOwner(BasePermission):
     """Permite operações object-level apenas pro dono do comentário."""
 
     def has_permission(self, request, view) -> bool:
-        # Nível-view: precisa estar autenticado pra qualquer chance de owner.
-        # O check de owner real fica em `has_object_permission`.
         return bool(request.user and request.user.is_authenticated)
 
     def has_object_permission(self, request, view, obj) -> bool:
-        # `obj` é uma instância de Comentario; `obj.customer` é o User dono.
         return bool(
             getattr(obj, "customer_id", None) == getattr(request.user, "id", None)
         )

@@ -4,7 +4,14 @@ import factory
 from django.contrib.auth import get_user_model
 from factory.django import DjangoModelFactory
 
-from clama.blog.models import Comentario, Post, PostStatus, Reacao, ReacaoTipo
+from clama.blog.models import (
+    Comentario,
+    CustomerBanido,
+    Post,
+    PostStatus,
+    Reacao,
+    ReacaoTipo,
+)
 
 
 class BlogUserFactory(DjangoModelFactory):
@@ -58,3 +65,12 @@ class ReacaoFactory(DjangoModelFactory):
     post = factory.SubFactory(PostFactory)
     customer = factory.SubFactory(BlogCustomerFactory)
     tipo = ReacaoTipo.LIKE
+
+
+class CustomerBanidoFactory(DjangoModelFactory):
+    class Meta:
+        model = CustomerBanido
+
+    customer = factory.SubFactory(BlogCustomerFactory)
+    motivo = "Comportamento inadequado nos comentários."
+    banido_por = factory.SubFactory(BlogUserFactory)

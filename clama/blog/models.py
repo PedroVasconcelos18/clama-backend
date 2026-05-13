@@ -156,3 +156,47 @@ class Reacao(TimestampedModel):
 
     def __str__(self) -> str:
         return f"{self.customer.email} {self.tipo} {self.post.slug}"
+
+
+class CustomerBanido(TimestampedModel):
+    """Banimento de customer do sistema de comentários do blog.
+
+    Revogável via setar `revogado_em`/`revogado_por` (não delete — preserva
+    histórico). Admin nunca é afetado (vide `IsUnbannedCustomer.has_permission`).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="banimentos",
+    )
+    motivo = models.TextField()
+    banido_em = models.DateTimeField(auto_now_add=True)
+    banido_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="banimentos_aplicados",
+    )
+    revogado_em = models.DateTimeField(null=True, blank=True)
+    revogado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="banimentos_revogados",
+    )
+
+    class Meta:
+        verbose_name = "Customer banido"
+        verbose_name_plural = "Customers banidos"
+        ordering = ["-banido_em"]
+        indexes = [
+            models.Index(
+                fields=["customer", "revogado_em"],
+                name="idx_blog_banido_cust_revog",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.customer.email} (revogado={self.revogado_em is not None})"

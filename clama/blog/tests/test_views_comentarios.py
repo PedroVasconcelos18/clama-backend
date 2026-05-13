@@ -100,6 +100,23 @@ class TestCreateComment:
         assert comment.post == post
         assert comment.ip_address == "203.0.113.10"
 
+    def test_banido_customer_returns_403_pastoral(self):
+        from clama.blog.tests.factories import CustomerBanidoFactory
+
+        _make_publicado(slug="post-1")
+        customer = BlogCustomerFactory()
+        CustomerBanidoFactory(customer=customer)
+        client = APIClient()
+        client.force_authenticate(user=customer)
+        response = client.post(
+            _list_url("post-1"),
+            {"conteudo": "Tentativa de comentario"},
+            format="json",
+        )
+        assert response.status_code == 403
+        body = response.json()
+        assert "customer_banido" in str(body)
+
     def test_too_short_conteudo_returns_400(self):
         _make_publicado(slug="post-1")
         customer = BlogCustomerFactory()

@@ -2,10 +2,19 @@ import pytest
 from django.db import IntegrityError, connection
 from django.utils import timezone
 
-from clama.blog.models import Comentario, Post, PostStatus, Reacao, ReacaoTipo
+from clama.blog.models import (
+    Comentario,
+    CustomerBanido,
+    Post,
+    PostStatus,
+    Reacao,
+    ReacaoTipo,
+)
 from clama.blog.tests.factories import (
     BlogCustomerFactory,
+    BlogUserFactory,
     ComentarioFactory,
+    CustomerBanidoFactory,
     PostFactory,
     ReacaoFactory,
 )
@@ -204,3 +213,54 @@ class TestReacaoModel:
         ReacaoFactory(post=post)
         post.delete()
         assert Reacao.objects.filter(post_id=post.id).count() == 0
+
+
+@pytest.mark.django_db
+class TestCustomerBanidoModel:
+    def test_create_via_factory(self):
+        ban = CustomerBanidoFactory()
+        assert ban.pk is not None
+        assert ban.motivo
+        assert ban.banido_em is not None
+        assert ban.revogado_em is None
+
+    def test_str_reflects_revogacao(self):
+        c = BlogCustomerFactory(email="x@y.test")
+        ban = CustomerBanidoFactory(customer=c)
+        s = str(ban)
+        assert "x@y.test" in s
+        assert "revogado=False" in s
+        ban.revogado_em = timezone.now()
+        ban.save()
+        assert "revogado=True" in str(ban)
+
+    def test_banido_por_e_revogado_por_apontam_para_user(self):
+        admin1 = BlogUserFactory(email="admin1@clama.test")
+        admin2 = BlogUserFactory(email="admin2@clama.test")
+        ban = CustomerBanidoFactory(banido_por=admin1)
+        ban.revogado_por = admin2
+        ban.revogado_em = timezone.now()
+        ban.save()
+        ban.refresh_from_db()
+        assert ban.banido_por == admin1
+        assert ban.revogado_por == admin2
+
+    def test_cascade_delete_when_customer_deleted(self):
+        c = BlogCustomerFactory()
+        CustomerBanidoFactory(customer=c)
+        CustomerBanidoFactory(customer=c)
+        assert CustomerBanido.objects.filter(customer=c).count() == 2
+        c.delete()
+        assert CustomerBanido.objects.filter(customer_id=c.id).count() == 0
+
+    def test_filter_active_banimentos(self):
+        c = BlogCustomerFactory()
+        active = CustomerBanidoFactory(customer=c)
+        revogado = CustomerBanidoFactory(customer=c)
+        revogado.revogado_em = timezone.now()
+        revogado.save()
+        active_qs = CustomerBanido.objects.filter(
+            customer=c, revogado_em__isnull=True
+        )
+        assert active_qs.count() == 1
+        assert active_qs.first().id == active.id

@@ -2,12 +2,15 @@ from unittest.mock import MagicMock
 
 import pytest
 from django.contrib.auth.models import AnonymousUser
+from django.utils import timezone
+from rest_framework.exceptions import PermissionDenied
 
 from clama.blog.permissions import IsCommentOwner, IsUnbannedCustomer
 from clama.blog.tests.factories import (
     BlogCustomerFactory,
     BlogUserFactory,
     ComentarioFactory,
+    CustomerBanidoFactory,
 )
 
 
@@ -34,6 +37,39 @@ class TestIsUnbannedCustomerUnit:
         # O check específico de admin é IsClamaAdmin.
         admin = BlogUserFactory(is_clama_admin=True)
         request = _request_with_user(admin)
+        assert IsUnbannedCustomer().has_permission(request, view=None) is True
+
+
+@pytest.mark.django_db
+class TestIsUnbannedCustomerWithBan:
+    def test_banido_ativo_raises_permission_denied(self):
+        c = BlogCustomerFactory()
+        CustomerBanidoFactory(customer=c)
+        request = _request_with_user(c)
+        with pytest.raises(PermissionDenied) as exc_info:
+            IsUnbannedCustomer().has_permission(request, view=None)
+        detail = exc_info.value.detail
+        assert detail.get("code") == "customer_banido"
+        assert "pastoral_message" in detail
+
+    def test_banimento_revogado_libera(self):
+        c = BlogCustomerFactory()
+        ban = CustomerBanidoFactory(customer=c)
+        ban.revogado_em = timezone.now()
+        ban.save()
+        request = _request_with_user(c)
+        assert IsUnbannedCustomer().has_permission(request, view=None) is True
+
+    def test_admin_nao_e_afetado_mesmo_com_registro(self):
+        # Edge case: admin cadastrado erroneamente como banido — ainda passa
+        admin = BlogUserFactory(is_clama_admin=True)
+        CustomerBanidoFactory(customer=admin)
+        request = _request_with_user(admin)
+        assert IsUnbannedCustomer().has_permission(request, view=None) is True
+
+    def test_customer_sem_qualquer_ban_passa(self):
+        c = BlogCustomerFactory()
+        request = _request_with_user(c)
         assert IsUnbannedCustomer().has_permission(request, view=None) is True
 
 

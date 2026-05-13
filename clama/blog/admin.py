@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Comentario, Post, Reacao
+from .models import Comentario, CustomerBanido, Post, Reacao
 
 
 @admin.register(Post)
@@ -89,3 +89,30 @@ class ReacaoAdmin(admin.ModelAdmin):
     search_fields = ("customer__email", "post__slug")
     readonly_fields = ("id", "created_at", "updated_at")
     ordering = ("-created_at",)
+
+
+@admin.register(CustomerBanido)
+class CustomerBanidoAdmin(admin.ModelAdmin):
+    list_display = ("customer", "banido_em", "banido_por", "revogado_em")
+    list_filter = ("revogado_em",)
+    search_fields = ("customer__email", "motivo")
+    readonly_fields = (
+        "id",
+        "banido_em",
+        "banido_por",
+        "created_at",
+        "updated_at",
+    )
+    ordering = ("-banido_em",)
+    fieldsets = (
+        ("Identificação", {"fields": ("id", "customer")}),
+        ("Banimento", {"fields": ("motivo", "banido_em", "banido_por")}),
+        ("Revogação", {"fields": ("revogado_em", "revogado_por")}),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
