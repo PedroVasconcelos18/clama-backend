@@ -397,6 +397,12 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "API do Clama - Plataforma de oração pastoral personalizada",
     "VERSION": CLAMA_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
+    # Evita colisões automáticas tipo "Status755Enum" quando múltiplos models
+    # têm um campo `status` com choices distintas (ex.: PedidoStatus vs PostStatus).
+    "ENUM_NAME_OVERRIDES": {
+        "PedidoStatusEnum": "clama.orders.models.PedidoStatus.choices",
+        "PostStatusEnum": "clama.blog.models.PostStatus.choices",
+    },
 }
 
 # Encrypted Model Fields

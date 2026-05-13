@@ -33,6 +33,8 @@ urlpatterns = [
     path("api/customer/", include("clama.customers.api.urls")),
     # Admin API (pedidos, metrics, planos, prompts)
     path("api/", include("clama.core.api.admin_urls")),
+    # Blog API (admin CRUD; endpoints públicos virão na Story 3.1)
+    path("api/", include("clama.blog.urls")),
     # API Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
