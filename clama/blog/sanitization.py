@@ -12,14 +12,16 @@ import bleach
 # bleach com strip=True remove apenas a tag, preservando o texto interno —
 # para <script>alert(1)</script>, isso deixaria "alert(1)" como plaintext.
 # Removemos o bloco inteiro antes de passar pro bleach.
+#
+# Pattern reflete duas variantes:
+# 1. Fechamento balanceado: `<tag ...>conteúdo</tag>` (greedy não, lazy `.*?`)
+# 2. Tag não-fechada/aberta: `<tag ...>` + tudo que sobra até EOF
+# Variante 2 cobre payloads como `<script>alert(1)` (parser HTML do
+# browser auto-fecharia, tornando isso ainda perigoso).
 _DANGEROUS_BLOCK_TAGS_RE = re.compile(
-    r"<(?P<tag>script|style|iframe|embed|object|noscript|template)\b[^>]*>.*?</(?P=tag)>",
+    r"<(?P<tag>script|style|iframe|embed|object|noscript|template)\b"
+    r"[^>]*>(?:.*?(?:</(?P=tag)\s*>|$))",
     flags=re.IGNORECASE | re.DOTALL,
-)
-# Variante self-closing / sem closing tag (defensiva).
-_DANGEROUS_SELFCLOSE_RE = re.compile(
-    r"<(script|style|iframe|embed|object|noscript|template)\b[^>]*/?>",
-    flags=re.IGNORECASE,
 )
 
 BLOG_ALLOWED_TAGS = [
@@ -63,7 +65,6 @@ def sanitize_post_html(html: str) -> str:
     if not html:
         return ""
     cleaned = _DANGEROUS_BLOCK_TAGS_RE.sub("", html)
-    cleaned = _DANGEROUS_SELFCLOSE_RE.sub("", cleaned)
     return bleach.clean(
         cleaned,
         tags=BLOG_ALLOWED_TAGS,

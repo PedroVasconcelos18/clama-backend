@@ -378,6 +378,20 @@ class AdminBannedCustomersViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
+        # Não permite banir outro admin (nem si mesmo). IsUnbannedCustomer
+        # já tem admin-override (admins não são bloqueados), mas criar
+        # registros de ban contra admins gera confusão de auditoria.
+        if getattr(customer, "is_clama_admin", False):
+            return Response(
+                {
+                    "code": "cannot_ban_admin",
+                    "pastoral_message": (
+                        "Admins não podem ser banidos. Para remover acesso, "
+                        "edite a flag is_clama_admin diretamente."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         # Idempotente: se já existe ban ativo, retorna o existente.
         existing = CustomerBanido.objects.filter(
             customer=customer, revogado_em__isnull=True

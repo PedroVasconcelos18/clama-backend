@@ -10,6 +10,8 @@ Em produção, `BUILD_API_TOKEN` fica vazio (API pública sem restrição) e
 o middleware é um no-op.
 """
 
+import secrets
+
 from django.conf import settings
 
 
@@ -22,10 +24,10 @@ class BuildTokenAuthMiddleware:
     def __call__(self, request):
         configured = settings.BUILD_API_TOKEN or ""
         received = request.META.get("HTTP_X_BUILD_TOKEN", "") or ""
-        # Comparação constant-time não é estritamente necessária aqui
-        # (token único compartilhado, não dependente de identidade de
-        # user) mas mantemos `==` simples; downstream pode endurecer.
+        # `secrets.compare_digest` é constant-time — defesa contra timing
+        # attacks (token é shared secret, baixo risco prático, mas custa
+        # nada e é boa prática).
         request.is_build_token = bool(
-            configured and received and configured == received
+            configured and received and secrets.compare_digest(configured, received)
         )
         return self.get_response(request)

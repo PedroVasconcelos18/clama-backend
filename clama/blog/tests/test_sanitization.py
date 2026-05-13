@@ -105,3 +105,42 @@ class TestSanitizePostHtml:
         result = sanitize_post_html("<embed>secret</embed><p>visible</p>")
         assert "<embed>" not in result
         assert "<p>visible</p>" in result
+
+    def test_unclosed_script_tag_full_strip(self):
+        # Sem </script> — browser HTML5 auto-fecharia até EOF; nossa regex
+        # também consome até EOF nesse caso.
+        result = sanitize_post_html('<script>alert("pwned")<p>safe</p>')
+        assert "<script>" not in result
+        assert "alert" not in result  # texto também removido
+        assert "pwned" not in result
+        # NOTA: O <p>safe</p> tambem foi consumido porque ficou apos
+        # o script aberto até EOF — comportamento aceitável (defesa
+        # em profundidade vale mais que preservação de tags pós-ataque).
+
+    def test_unclosed_iframe_full_strip(self):
+        result = sanitize_post_html('<iframe src="evil.com">')
+        assert "<iframe" not in result
+        assert "evil.com" not in result
+
+    def test_unclosed_style_full_strip(self):
+        result = sanitize_post_html("<style>body{display:none}")
+        assert "<style>" not in result
+        assert "body{display" not in result
+
+    def test_balanced_script_after_safe_content_strip_only_script(self):
+        # Conteúdo legítimo antes do ataque é preservado
+        result = sanitize_post_html(
+            "<p>antes</p><script>alert(1)</script><p>depois</p>"
+        )
+        assert "<p>antes</p>" in result
+        assert "<p>depois</p>" in result
+        assert "<script>" not in result
+        assert "alert" not in result
+
+    def test_script_with_attributes_strip(self):
+        result = sanitize_post_html(
+            '<script type="text/javascript" src="evil.js">alert(1)</script>'
+        )
+        assert "<script" not in result
+        assert "alert" not in result
+        assert "evil.js" not in result

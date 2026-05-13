@@ -162,6 +162,30 @@ class TestAdminBanCreate:
         )
         assert response.status_code == 400
 
+    def test_nao_permite_banir_admin(self):
+        target_admin = BlogUserFactory(is_clama_admin=True)
+        client, _ = _admin_client()
+        response = client.post(
+            ADMIN_BANNED,
+            {
+                "customer_id": str(target_admin.id),
+                "motivo": "tentativa de ban em admin",
+            },
+            format="json",
+        )
+        assert response.status_code == 400
+        body = response.json()
+        assert body["code"] == "cannot_ban_admin"
+
+    def test_nao_permite_banir_si_mesmo(self):
+        client, admin = _admin_client()
+        response = client.post(
+            ADMIN_BANNED,
+            {"customer_id": str(admin.id), "motivo": "auto-ban"},
+            format="json",
+        )
+        assert response.status_code == 400
+
 
 @pytest.mark.django_db
 class TestAdminBanRevoke:
