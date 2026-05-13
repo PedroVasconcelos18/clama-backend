@@ -6,6 +6,7 @@ from django.db import models
 from clama.core.models import TimestampedModel
 
 from .managers import PostManager
+from .sanitization import sanitize_post_html
 
 
 class PostStatus(models.TextChoices):
@@ -52,3 +53,7 @@ class Post(TimestampedModel):
 
     def __str__(self):
         return self.titulo
+
+    def save(self, *args, **kwargs):
+        self.conteudo_html = sanitize_post_html(self.conteudo_html or "")
+        super().save(*args, **kwargs)

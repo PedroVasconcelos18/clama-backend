@@ -85,3 +85,31 @@ class TestPostManager:
 
         assert publicados[0].id == new.id
         assert publicados[1].id == old.id
+
+
+@pytest.mark.django_db
+class TestPostSaveSanitization:
+    def test_save_strips_script_tag(self):
+        post = PostFactory(conteudo_html="<script>alert(1)</script><p>safe</p>")
+        post.refresh_from_db()
+        assert "<script>" not in post.conteudo_html
+        assert "alert" not in post.conteudo_html
+        assert "<p>safe</p>" in post.conteudo_html
+
+    def test_save_strips_iframe_tag(self):
+        post = PostFactory(conteudo_html='<iframe src="x"></iframe><p>ok</p>')
+        post.refresh_from_db()
+        assert "<iframe" not in post.conteudo_html
+        assert "<p>ok</p>" in post.conteudo_html
+
+    def test_save_preserves_blockquote_class_versiculo(self):
+        html = '<blockquote class="versiculo">João 3:16</blockquote>'
+        post = PostFactory(conteudo_html=html)
+        post.refresh_from_db()
+        assert 'class="versiculo"' in post.conteudo_html
+        assert "João 3:16" in post.conteudo_html
+
+    def test_save_handles_empty_conteudo_html(self):
+        post = PostFactory(conteudo_html="")
+        post.refresh_from_db()
+        assert post.conteudo_html == ""
