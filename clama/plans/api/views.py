@@ -25,7 +25,9 @@ class PlanListView(ListAPIView):
     pagination_class = None
 
     def get_queryset(self):
-        return Plan.objects.filter(ativo=True).order_by("ordem")
+        # Lista apenas planos visíveis — oculta o "Gratuito" do fluxo
+        # freemium, que é selecionado por endpoint dedicado.
+        return Plan.objects.filter(ativo=True, visivel=True).order_by("ordem")
 
     @extend_schema(
         tags=["Planos"],

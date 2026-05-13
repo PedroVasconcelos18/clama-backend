@@ -5,6 +5,7 @@ Campos sensíveis (nome, email, telefone, cpf_cnpj, pedido_oracao, oracao_gerada
 criptografados em coluna via django-encrypted-model-fields para conformidade LGPD.
 """
 
+from django.conf import settings
 from django.db import models
 from encrypted_model_fields.fields import (
     EncryptedCharField,
@@ -37,6 +38,13 @@ class PedidoStatus(models.TextChoices):
     """Status do pedido no fluxo de processamento."""
 
     AGUARDANDO_PAGAMENTO = "aguardando_pagamento", "Aguardando pagamento"
+    # Pós-renegociação 2026-05-08: pedidos do fluxo freemium ficam neste
+    # status entre a submissão do form e o clique no link de confirmação
+    # por e-mail (double opt-in). Não passa pelo Asaas.
+    AGUARDANDO_CONFIRMACAO_EMAIL = (
+        "aguardando_confirmacao_email",
+        "Aguardando confirmação por e-mail",
+    )
     PAGO = "pago", "Pago"
     GERANDO_ORACAO = "gerando_oracao", "Gerando oração"
     ORACAO_GERADA = "oracao_gerada", "Oração gerada"
@@ -103,6 +111,24 @@ class Pedido(UUIDPKModel, TimestampedModel):
         verbose_name="Plano",
     )
     valor_centavos = models.IntegerField(verbose_name="Valor (centavos)")
+
+    # Vínculo com User (criado no fluxo freemium; nullable para pedidos pagos
+    # que ainda não tem conta associada).
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pedidos",
+        verbose_name="Usuário",
+    )
+
+    # Marca pedidos do fluxo freemium (gratuitos, não passam pelo Asaas).
+    eh_gratuito = models.BooleanField(
+        default=False,
+        verbose_name="É gratuito",
+        help_text="Pedido do fluxo freemium — não passa pelo gateway de pagamento.",
+    )
 
     # Canal e status
     canal_entrega = models.CharField(
@@ -180,6 +206,35 @@ class Pedido(UUIDPKModel, TimestampedModel):
         null=True,
         blank=True,
         verbose_name="IP do consentimento",
+    )
+
+    # Anti-fraude (pós-renegociação 2026-05-08): hash do device fingerprint
+    # capturado no frontend (FingerprintJS). No MVP é apenas observação —
+    # ainda não bloqueia. Vira critério de bloqueio quando o dataset mostrar
+    # padrão de fraude.
+    device_hash = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        verbose_name="hash do device fingerprint",
+    )
+
+    # P-V5 wave 2 — idempotência da entrega do e-mail final com a oração.
+    # Setado pela `_enviar_email_freemium` task APÓS o email_sender retornar
+    # sucesso e ANTES do `cache.delete` da senha temp. Re-execução da task
+    # (Celery retry, double dispatch) lê este campo e retorna early sem
+    # reenviar — evita race entre `cache.delete` e o save do `Pedido.status`
+    # mandar email duplicado SEM o bloco de credenciais (cache já limpo).
+    # Campo aplica-se ao fluxo freemium (`eh_gratuito=True`); pedidos pagos
+    # continuam usando `Pedido.status == ENVIADA` como guard de idempotência.
+    oracao_email_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="E-mail da oração enviado em",
+        help_text=(
+            "Marcado após delivery confirmada do e-mail final com a oração "
+            "(fluxo freemium). Re-execuções da task ficam no-op se setado."
+        ),
     )
 
     class Meta:

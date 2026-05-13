@@ -185,3 +185,63 @@ MSG_ERRO_DEFINITIVO = (
 MSG_TELEFONE_INVALIDO = (
     "Confira seu telefone com DDD — vamos enviar a oração por aqui."
 )
+
+
+# =============================================================================
+# FREEMIUM (pedido gratuito)
+# =============================================================================
+
+# OTP inválido ou expirado (TTL passou ou código não bate)
+MSG_FREEMIUM_OTP_INVALIDO = (
+    "Código inválido ou expirado. Pede um novo código e tenta de novo."
+)
+
+# Rate limit do envio de OTP por telefone
+MSG_FREEMIUM_OTP_RATE_LIMIT = (
+    "Aguarde 1 minuto antes de pedir um novo código."
+)
+
+# Identificadores já usados (CPF/email/telefone na blacklist)
+MSG_FREEMIUM_BLACKLIST_HIT = (
+    "Você já recebeu sua oração gratuita. "
+    "Sempre que quiser, pode fazer um novo pedido pela página principal."
+)
+
+# E-mail descartável detectado
+MSG_FREEMIUM_EMAIL_DESCARTAVEL = (
+    "Use um e-mail principal para receber sua oração — "
+    "e-mails temporários não funcionam aqui."
+)
+
+# User já tem conta criada (gate user-existence) — orienta pra fazer login.
+MSG_FREEMIUM_USER_JA_POSSUI_CONTA = (
+    "Você já tem conta com a gente. Faça login pra fazer um novo pedido."
+)
+
+# Pedido pendente aguardando confirmação por email — orienta a verificar email.
+MSG_FREEMIUM_PEDIDO_EM_ANDAMENTO = (
+    "Você já tem um pedido aguardando confirmação. Confira seu e-mail "
+    "para finalizar — se não achar, olha na aba de spam."
+)
+
+
+# =============================================================================
+# CUSTOMER AUTH (login do user freemium pós-G1)
+# =============================================================================
+
+# Credenciais inválidas no /api/customer/auth/login/. Mensagem idêntica para
+# email inexistente, senha errada e admin tentando logar (sem oracle de role).
+MSG_CUSTOMER_LOGIN_FALHOU = (
+    "E-mail ou senha não conferem. Tenta de novo."
+)
+
+# Senha trocada com sucesso no /change-password/.
+MSG_CUSTOMER_PASSWORD_TROCADA = (
+    "Senha atualizada com sucesso."
+)
+
+# 403 quando user logado tem force_change_password=True e tenta acessar
+# endpoint protegido (exceto /me/ e /change-password/).
+MSG_CUSTOMER_FORCE_CHANGE_PASSWORD = (
+    "Antes de continuar, atualize sua senha."
+)

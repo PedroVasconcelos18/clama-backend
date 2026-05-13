@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from encrypted_model_fields.fields import EncryptedCharField
 
 
 class UserManager(BaseUserManager):
@@ -73,6 +74,66 @@ class User(AbstractUser):
         "Admin do Clama",
         default=False,
         help_text="Designa se o usuário pode acessar o painel admin do Clama.",
+    )
+
+    # Dados pessoais para fluxo freemium / customer (criptografados, LGPD)
+    cpf_cnpj = EncryptedCharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        verbose_name="CPF/CNPJ",
+    )
+    telefone = EncryptedCharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        verbose_name="Telefone",
+    )
+
+    # Sinaliza que o usuário precisa trocar a senha temporária no próximo login.
+    # Usado pelo fluxo freemium ao criar conta com senha gerada automaticamente.
+    force_change_password = models.BooleanField(
+        "Forçar troca de senha",
+        default=False,
+        help_text="Indica que o usuário deve trocar a senha no próximo login.",
+    )
+
+    # Hashes determinísticos (HMAC-SHA-256 via FREEMIUM_HASH_SECRET) para
+    # lookup do user-existence gate da Landing Page sem expor cleartext nem
+    # depender de filter direto sobre EncryptedCharField (que não suporta).
+    # Mantidos em sync via pre_save signal — bulk_create não dispara signals
+    # e exige set manual.
+    email_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        verbose_name="Hash do e-mail",
+        help_text="HMAC-SHA-256 do e-mail normalizado (Gmail canonical).",
+    )
+    cpf_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        null=True,
+        blank=True,
+        verbose_name="Hash do CPF/CNPJ",
+        help_text="HMAC-SHA-256 do CPF/CNPJ (somente dígitos).",
+    )
+    telefone_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        null=True,
+        blank=True,
+        verbose_name="Hash do telefone",
+        help_text="HMAC-SHA-256 do telefone (somente dígitos).",
+    )
+
+    # Marca o instante em que o usuário consumiu o pedido gratuito (saga G1).
+    # Setado dentro de FreemiumConfirmarView._executar_saga ANTES do
+    # marcar_usado do token. Indexed pra eventuais queries analíticas.
+    freemium_used_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Pedido gratuito consumido em",
     )
 
     objects = UserManager()

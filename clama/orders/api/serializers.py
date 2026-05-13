@@ -7,6 +7,12 @@ from rest_framework import serializers
 
 from clama.core.legal import POLITICA_VERSAO_ATUAL
 from clama.core.pastoral_messages import MSG_ERRO_CREDITOS_24H
+from clama.core.validators_documento import (
+    is_valid_cnpj as _is_valid_cnpj,
+)
+from clama.core.validators_documento import (
+    is_valid_cpf as _is_valid_cpf,
+)
 from clama.orders.models import CanalEntrega, Pedido, PedidoStatus
 from clama.plans.models import Plan
 
@@ -78,32 +84,52 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         }
 
     def validate_plano(self, value):
-        """Valida que o plano está ativo."""
+        """
+        Valida que o plano está ativo E é visível.
+
+        `visivel=False` é usado por planos internos (ex.: "Gratuito" do
+        fluxo freemium). Permitir um atacante referenciar esse UUID no
+        fluxo pago expõe pricing não-pretendido — sempre rejeite no entry
+        do serializer pago (P-14).
+        """
         if value is None:
             return value
         if not value.ativo:
             raise serializers.ValidationError(
                 "Esse plano não está disponível no momento."
             )
+        if not value.visivel:
+            raise serializers.ValidationError(
+                "Esse plano não está disponível."
+            )
         return value
 
     def validate_cpf_cnpj(self, value):
-        """Valida formato do CPF (11 dígitos) ou CNPJ (14 dígitos)."""
+        """
+        Valida CPF (11 dígitos) ou CNPJ (14 dígitos), incluindo dígito verificador.
+
+        Algoritmo portado de `clama-frontend/src/lib/validators/cpfCnpj.ts` para
+        manter paridade entre validação de cliente e servidor.
+        """
         # Remove caracteres não numéricos
         digits = "".join(c for c in value if c.isdigit())
 
         if len(digits) == 11:
-            # CPF
+            if not _is_valid_cpf(digits):
+                raise serializers.ValidationError(
+                    "Confira seu CPF — parece que tem algum dígito errado."
+                )
             return digits
-        elif len(digits) == 14:
-            # CNPJ
+        if len(digits) == 14:
+            if not _is_valid_cnpj(digits):
+                raise serializers.ValidationError(
+                    "Confira seu CNPJ — parece que tem algum dígito errado."
+                )
             return digits
-        else:
-            raise serializers.ValidationError(
-                "CPF deve ter 11 dígitos ou CNPJ deve ter 14 dígitos."
-            )
 
-        return digits
+        raise serializers.ValidationError(
+            "CPF deve ter 11 dígitos ou CNPJ deve ter 14 dígitos."
+        )
 
     def validate_consent_aceito(self, value):
         """Valida que o consentimento foi aceito."""
@@ -135,7 +161,7 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Cria o pedido com campos de consentimento LGPD."""
+        """Cria o pedido com campos de consentimento LGPD + vínculo com user."""
         # Remove consent_aceito do validated_data (será setado manualmente)
         consent_aceito = validated_data.pop("consent_aceito", False)
 
@@ -154,6 +180,12 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         validated_data["consent_versao"] = POLITICA_VERSAO_ATUAL
         validated_data["consent_aceito_at"] = timezone.now()
         validated_data["consent_ip"] = consent_ip
+
+        # Spec lp-user-existence-gate (2026-05-10): vincula Pedido ao User
+        # autenticado. PedidoCreateView usa IsAuthenticated, então
+        # request.user nunca é AnonymousUser aqui.
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            validated_data["user"] = request.user
 
         return super().create(validated_data)
 

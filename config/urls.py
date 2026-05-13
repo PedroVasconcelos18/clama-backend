@@ -25,8 +25,12 @@ urlpatterns = [
     path("api/", include("clama.payments.api.urls")),
     # Notifications API (webhooks)
     path("api/", include("clama.notifications.api.urls")),
+    # Freemium API (pedido gratuito)
+    path("api/", include("clama.freemium.api.urls")),
     # Users API (admin auth)
     path("api/", include("clama_backend.users.api.urls")),
+    # Customer API (login customer, /me, change-password) — spec lp-user-existence-gate.
+    path("api/customer/", include("clama.customers.api.urls")),
     # Admin API (pedidos, metrics, planos, prompts)
     path("api/", include("clama.core.api.admin_urls")),
     # API Documentation

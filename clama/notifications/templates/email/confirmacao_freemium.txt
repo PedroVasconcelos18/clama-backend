@@ -1,0 +1,25 @@
+CLAMA.
+
+Paz e bem, {{ primeiro_nome }}.
+
+Recebemos seu pedido de oração com carinho.
+
+Para confirmar e receber sua oração grátis, abra o link abaixo e clique em
+"Confirmar minha oração" na página:
+
+{{ link_confirmacao }}
+
+Esse link expira em {{ expira_em_horas }} horas.
+
+---
+
+"Vinde a mim, todos os que estais cansados
+e oprimidos, que eu vos aliviarei."
+— Mateus 11:28
+
+---
+
+clama.me
+
+Se você não fez este pedido, pode ignorar este e-mail.
+Para contato: contato@clama.me

@@ -2,7 +2,11 @@
 Handlers customizados para exceções DRF.
 """
 
-from rest_framework.exceptions import Throttled
+from rest_framework.exceptions import (
+    AuthenticationFailed,
+    NotAuthenticated,
+    Throttled,
+)
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 
@@ -27,16 +31,17 @@ def pastoral_exception_handler(exc, context):
     """
     if isinstance(exc, ClamaBaseException):
         status = getattr(exc, "status_code", 400)
-        return Response(
-            {
-                "error": {
-                    "code": exc.code,
-                    "message": exc.message,
-                    "pastoral_message": exc.pastoral_message,
-                }
-            },
-            status=status,
-        )
+        error_body = {
+            "code": exc.code,
+            "message": exc.message,
+            "pastoral_message": exc.pastoral_message,
+        }
+        # Merge campos extras (ex.: `redirect`) sem permitir override dos
+        # campos canônicos — defesa contra collision acidental.
+        for k, v in (getattr(exc, "extra", None) or {}).items():
+            if k not in error_body:
+                error_body[k] = v
+        return Response({"error": error_body}, status=status)
 
     # Rate limiting (429 Throttled)
     if isinstance(exc, Throttled):
@@ -50,6 +55,29 @@ def pastoral_exception_handler(exc, context):
                 }
             },
             status=429,
+        )
+
+    # P-16 (G2.a): pastoraliza 401 do paywall. `IsAuthenticated` levanta
+    # `NotAuthenticated` quando o usuário é anônimo; algumas auth backends
+    # do DRF levantam `AuthenticationFailed` para credenciais inválidas
+    # (ex.: Bearer expirado). Em ambos os casos queremos a mesma mensagem
+    # pastoral genérica. Se a exceção foi levantada com um detail dict
+    # já no formato pastoral (caso de `CustomerLogoutView` cross-user e
+    # outros), preserva o payload original — apenas transforma quando
+    # o detail é a string genérica do DRF.
+    if isinstance(exc, (NotAuthenticated, AuthenticationFailed)):
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, dict) and "error" in detail:
+            return Response(detail, status=exc.status_code)
+        return Response(
+            {
+                "error": {
+                    "code": "not_authenticated",
+                    "message": "Authentication required",
+                    "pastoral_message": "Faça login pra continuar.",
+                }
+            },
+            status=exc.status_code,
         )
 
     # Fallback para o handler padrão do DRF
