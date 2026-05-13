@@ -72,6 +72,7 @@ DJANGO_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.admin",
     "django.forms",
+    "django.contrib.sitemaps",
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
@@ -442,6 +443,24 @@ FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default=FRONTEND_URL)
 # de confirmação freemium aponta para `BACKEND_PUBLIC_URL/api/freemium/confirmar/`).
 # Em local default aponta pro próprio backend Django.
 BACKEND_PUBLIC_URL = env("BACKEND_PUBLIC_URL", default="http://localhost:8000")
+
+# Blog (Story 2.12)
+# -------------------------------------------------------------------------------
+# Vercel Deploy Hook URL — chamada após publicar/despublicar/excluir post pra
+# rebuildar o frontend SSG. Em local pode ficar vazio: task degrada como no-op
+# com log warning.
+VERCEL_DEPLOY_HOOK_URL = env("VERCEL_DEPLOY_HOOK_URL", default="")
+
+# Chave IndexNow — usada pra notificar search engines de novos posts publicados.
+# Best-effort: task ignora falhas (não dispara Sentry) e degrada como no-op se vazio.
+INDEXNOW_KEY = env("INDEXNOW_KEY", default="")
+
+# Base URL pública do blog (frontend SSG). Usada para montar URLs canônicas
+# nos payloads de IndexNow.
+FRONTEND_PUBLIC_BLOG_BASE_URL = env(
+    "FRONTEND_PUBLIC_BLOG_BASE_URL",
+    default="https://clama.me",
+)
 
 # Anthropic (Claude API)
 # -------------------------------------------------------------------------------
