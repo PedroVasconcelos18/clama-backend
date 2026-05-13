@@ -8,6 +8,7 @@ from .views import (
     ComentarioUpdateDestroyView,
     PostPublicViewSet,
     PostViewSet,
+    ReacaoToggleView,
 )
 
 router = DefaultRouter()
@@ -26,5 +27,10 @@ urlpatterns = router.urls + [
         "blog/comments/<uuid:id>/",
         ComentarioUpdateDestroyView.as_view(),
         name="comentario-detail",
+    ),
+    path(
+        "blog/posts/<slug:slug>/like/",
+        ReacaoToggleView.as_view(),
+        name="reacao-toggle",
     ),
 ]

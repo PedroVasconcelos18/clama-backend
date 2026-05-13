@@ -21,7 +21,9 @@ from rest_framework.response import Response
 
 from clama_backend.users.permissions import IsClamaAdmin
 
-from .models import Comentario, Post, PostStatus
+from rest_framework.views import APIView
+
+from .models import Comentario, Post, PostStatus, Reacao, ReacaoTipo
 from .permissions import IsCommentOwner, IsUnbannedCustomer
 from .serializers import (
     ComentarioSerializer,
@@ -196,6 +198,18 @@ class ComentarioListCreateView(generics.ListCreateAPIView):
         response = super().finalize_response(request, response, *args, **kwargs)
         if request.method in ("GET", "HEAD"):
             response["Cache-Control"] = "public, max-age=10"
+            # FR49: noindex se há comentários novos (<24h) que ainda não
+            # passaram pelo radar da moderação — protege SEO contra ofensas
+            # publicadas mas não-deletadas.
+            cutoff = timezone.now() - timedelta(hours=24)
+            try:
+                post = self.get_post()
+            except Exception:
+                post = None
+            if post and Comentario.objects.filter(
+                post=post, created_at__gt=cutoff
+            ).exists():
+                response["X-Robots-Tag"] = "noindex"
         return response
 
 
@@ -247,3 +261,56 @@ def serializers_validation_error(code: str, message: str):
     return ValidationError(
         {"code": code, "pastoral_message": message}
     )
+
+
+@method_decorator(
+    ratelimit(key="user", rate="30/m", method="POST", block=False),
+    name="post",
+)
+class ReacaoToggleView(APIView):
+    """Toggle like de um post.
+
+    POST cria a reação se ainda não existe (liked=true) ou deleta se já
+    existe (liked=false). Retorna `like_count` atualizado para o
+    frontend renderizar.
+    """
+
+    permission_classes = [IsUnbannedCustomer]
+    http_method_names = ["post", "head", "options"]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                description='{"liked": bool, "like_count": int}'
+            )
+        },
+        summary="Toggle like de um post",
+    )
+    def post(self, request, slug, *args, **kwargs):
+        if getattr(request, "limited", False):
+            return Response(
+                {
+                    "code": "rate_limit_exceeded",
+                    "pastoral_message": (
+                        "Calma! Aguarde um momento antes de reagir de novo."
+                    ),
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        post = get_object_or_404(Post, slug=slug, status=PostStatus.PUBLICADO)
+        with transaction.atomic():
+            existing = (
+                Reacao.objects.select_for_update()
+                .filter(post=post, customer=request.user, tipo=ReacaoTipo.LIKE)
+                .first()
+            )
+            if existing is not None:
+                existing.delete()
+                liked = False
+            else:
+                Reacao.objects.create(
+                    post=post, customer=request.user, tipo=ReacaoTipo.LIKE
+                )
+                liked = True
+        return Response({"liked": liked, "like_count": post.like_count})
