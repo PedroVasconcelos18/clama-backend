@@ -46,8 +46,12 @@ class TestAdminCommentsList:
         assert response.status_code == 403
 
     def test_filter_by_suspeitos(self):
-        ComentarioFactory(is_suspeito=False)
-        suspeito = ComentarioFactory(is_suspeito=True)
+        # is_suspeito é controlado pelo pre_save signal (Story 5.3) baseado
+        # no conteúdo; passar `is_suspeito=True` na factory seria sobrescrito.
+        ComentarioFactory(conteudo="Texto pastoral limpo e edificante.")
+        suspeito = ComentarioFactory(
+            conteudo="Que merda de texto, compre agora curso!"
+        )
         client, _ = _admin_client()
         response = client.get(f"{ADMIN_COMMENTS}?status=suspeitos")
         assert response.status_code == 200

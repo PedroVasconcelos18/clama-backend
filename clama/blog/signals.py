@@ -5,10 +5,11 @@ disparamos tasks Celery — a logica vive nas tasks, que sao testaveis
 isoladamente e retryable.
 """
 
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
-from .models import Post, PostStatus
+from .models import Comentario, Post, PostStatus
+from .moderation import eh_comentario_suspeito
 from .tasks import notificar_indexnow, regenerar_blog_ssg
 
 
@@ -23,3 +24,14 @@ def on_post_saved(sender, instance, created, **kwargs):
     regenerar_blog_ssg.delay(post_id)
     if instance.status == PostStatus.PUBLICADO:
         notificar_indexnow.delay(post_id)
+
+
+@receiver(pre_save, sender=Comentario)
+def flag_comentario_suspeito(sender, instance, **kwargs):
+    """Atualiza `is_suspeito` antes de salvar, com base na lista de palavras
+    suspeitas (vide `moderation.eh_comentario_suspeito`).
+
+    Sempre re-avalia: edits que limparam o conteúdo ofensivo deflag automatico;
+    se conteúdo novo bate, flag de novo.
+    """
+    instance.is_suspeito = eh_comentario_suspeito(instance.conteudo or "")
