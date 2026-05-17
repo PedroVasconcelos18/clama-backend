@@ -1,0 +1,32 @@
+CLAMA.
+
+Paz e bem, {{ primeiro_nome }}.
+
+Recebemos um pedido para recuperar o acesso à sua conta no Clama.
+Geramos uma senha temporária para você — use-a no próximo acesso.
+Vamos pedir para que você troque por uma senha sua logo em seguida.
+
+---
+
+SUAS CREDENCIAIS DE ACESSO
+
+E-mail: {{ login_email }}
+Senha temporária: {{ senha_temporaria }}
+
+Entre em: {{ login_url }}
+
+Se você não pediu isso, pode ignorar este e-mail com tranquilidade —
+sua senha anterior continua válida até o primeiro acesso com a
+temporária acima.
+
+---
+
+"O Senhor é o meu pastor; nada me faltará."
+— Salmo 23:1
+
+---
+
+clama.me
+
+Este email foi enviado com amor pelo Clama.
+Para contato: contato@clama.me

@@ -280,6 +280,9 @@ class TestCustomerMe:
         assert resp.data["nome_completo"] == "Maria Silva"
         assert resp.data["force_change_password"] is False
         assert resp.data["freemium_used_at"] is None
+        # Dados de cadastro pra pré-preencher o form de pedido na /conta.
+        assert resp.data["cpf_cnpj"] == "12345678901"
+        assert resp.data["telefone"] == "+5511999998888"
 
     def test_me_acessivel_mesmo_com_force_change_password(
         self, api_client, customer_force_change

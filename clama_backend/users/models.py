@@ -10,6 +10,18 @@ class NomeFormatBlog(models.TextChoices):
     COMPACTO = "compacto", "Primeiro nome + inicial (Juliana S.)"
 
 
+class SexoCadastro(models.TextChoices):
+    """Sexo no cadastro do customer — espelha as choices de Pedido.Sexo.
+
+    Definido aqui (não importado de orders) pra manter a camada de auth
+    desacoplada de orders.
+    """
+
+    FEMININO = "feminino", "Feminino"
+    MASCULINO = "masculino", "Masculino"
+    NAO_INFORMADO = "nao_informado", "Não informado"
+
+
 class UserManager(BaseUserManager):
     """
     Manager customizado para User com métodos de conveniência.
@@ -150,6 +162,23 @@ class User(AbstractUser):
         blank=True,
         db_index=True,
         verbose_name="Pedido gratuito consumido em",
+    )
+
+    # Dados do destinatário padrão das orações deste customer. Não são parte
+    # da identidade (cada Pedido ainda tem sua própria idade/sexo, pois a
+    # oração pode ser pra terceiros) — servem só pra pré-preencher o form na
+    # /conta. Backfill inicial vem do pedido mais recente (migração).
+    idade = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Idade (pré-preenchimento)",
+    )
+    sexo = models.CharField(
+        max_length=20,
+        choices=SexoCadastro.choices,
+        blank=True,
+        default="",
+        verbose_name="Sexo (pré-preenchimento)",
     )
 
     objects = UserManager()

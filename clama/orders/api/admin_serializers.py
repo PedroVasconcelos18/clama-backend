@@ -58,6 +58,7 @@ class AdminPedidoListSerializer(serializers.ModelSerializer):
             "valor_reais_str",
             "status",
             "canal_entrega",
+            "eh_gratuito",
         ]
 
 

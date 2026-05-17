@@ -12,6 +12,7 @@ from clama.customers.api.views import (
     CustomerMeView,
     CustomerPedidosListView,
     CustomerRefreshView,
+    ForgotPasswordView,
 )
 
 app_name = "customers"
@@ -24,6 +25,11 @@ urlpatterns = [
         "auth/change-password/",
         ChangePasswordView.as_view(),
         name="change-password",
+    ),
+    path(
+        "auth/forgot-password/",
+        ForgotPasswordView.as_view(),
+        name="forgot-password",
     ),
     path("me/", CustomerMeView.as_view(), name="me"),
     path("pedidos/", CustomerPedidosListView.as_view(), name="pedidos"),

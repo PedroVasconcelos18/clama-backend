@@ -382,6 +382,12 @@ REST_FRAMEWORK = {
         # (anti spray pós-takeover de sessão).
         "customer_login": "5/min",
         "customer_change_password": "10/hour",
+        # Recuperação de senha ("Esqueci minha senha") por IP. Endpoint
+        # anônimo que dispara e-mail com senha temporária — janela apertada
+        # para não permitir email-bombing de uma vítima nem enumeração via
+        # timing/volume. 3/h é folgado pro caso legítimo (errou o e-mail,
+        # tentou de novo) e hostil pro abuso.
+        "customer_forgot_password": "3/hour",
     },
     "EXCEPTION_HANDLER": "clama.core.handlers.pastoral_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

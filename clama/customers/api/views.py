@@ -29,11 +29,17 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from clama.core.pastoral_messages import MSG_CUSTOMER_FORGOT_PASSWORD_ENVIADO
 from clama.customers.api.serializers import (
     ChangePasswordSerializer,
     CustomerPedidoListSerializer,
     CustomerTokenObtainPairSerializer,
     CustomerUserSerializer,
+    ForgotPasswordSerializer,
+)
+from clama.freemium.temp_password import gerar_senha_temporaria
+from clama.notifications.services.email_sender import (
+    enviar_email_recuperacao_senha,
 )
 from clama.orders.models import Pedido
 
@@ -54,6 +60,16 @@ class ChangePasswordThrottle(UserRateThrottle):
     """
 
     scope = "customer_change_password"
+
+
+class ForgotPasswordThrottle(ScopedRateThrottle):
+    """
+    3/hour por IP. Endpoint anônimo — `ScopedRateThrottle` cai pro ident
+    de IP quando não há user autenticado, espelhando o `CustomerLoginThrottle`.
+    Janela apertada para impedir email-bombing de uma vítima.
+    """
+
+    scope = "customer_forgot_password"
 
 
 class CustomerLoginView(TokenObtainPairView):
@@ -189,6 +205,147 @@ class ChangePasswordView(APIView):
             {"detail": "Senha atualizada com sucesso."},
             status=status.HTTP_200_OK,
         )
+
+
+class ForgotPasswordView(APIView):
+    """
+    POST /api/customer/auth/forgot-password/
+
+    Body: `{email}`.
+
+    Fluxo "Esqueci minha senha":
+      1. Valida o formato do e-mail (serializer).
+      2. Procura um customer ATIVO e não-admin com esse e-mail
+         (case-insensitive, mesmo lookup do login).
+      3. Se achar: gera senha temporária, aplica via `set_password`,
+         seta `force_change_password=True` (obriga troca no 1º acesso) e
+         envia o e-mail **síncrono**.
+      4. **Sempre** responde 200 com a mesma mensagem genérica
+         (`MSG_CUSTOMER_FORGOT_PASSWORD_ENVIADO`) — não revela se o e-mail
+         existe, é de admin ou está inativo (anti-enumeração de contas).
+
+    Decisões (confirmadas com o produto):
+    - **Síncrono**: sem Celery/cache. O envio acontece no request; não há o
+      gargalo de geração de oração que justifica a fila no freemium.
+    - **Reset de qualquer conta ativa**: funciona mesmo se a conta ainda
+      estava com `force_change_password=True` (ex.: usuário freemium que
+      perdeu o e-mail original com a senha temporária). A nova senha
+      temporária simplesmente substitui a anterior.
+    - **Anti-enumeração**: resposta idêntica em todos os casos. Falha de
+      envio de e-mail é logada (Sentry via `@with_retry`) mas NÃO altera o
+      response — não damos oracle de "esse e-mail existe mas o envio falhou".
+
+    `transaction.atomic()` + `select_for_update` serializa requests
+    concorrentes do mesmo user (raro, mas o throttle de 3/h já limita).
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ForgotPasswordThrottle]
+    throttle_scope = "customer_forgot_password"
+
+    @extend_schema(
+        tags=["Customer / Auth"],
+        summary="Solicitar recuperação de senha (envia senha temporária)",
+        request=ForgotPasswordSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="Resposta genérica (sempre, anti-enumeração)"
+            )
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"]
+
+        UserModel = get_user_model()
+
+        # Resposta genérica reutilizada em TODOS os caminhos de saída.
+        generic_response = Response(
+            {"detail": MSG_CUSTOMER_FORGOT_PASSWORD_ENVIADO},
+            status=status.HTTP_200_OK,
+        )
+
+        try:
+            with transaction.atomic():
+                try:
+                    user = (
+                        UserModel.objects.select_for_update()
+                        .get(email__iexact=email)
+                    )
+                except UserModel.DoesNotExist:
+                    # E-mail não cadastrado — não revela. Log sem PII além
+                    # do domínio (mesmo padrão do email_sender).
+                    dominio = email.rsplit("@", 1)[-1] if "@" in email else "?"
+                    logger.info(
+                        "Forgot-password para e-mail não cadastrado",
+                        extra={
+                            "event": "customer_forgot_password_email_unknown",
+                            "email_dominio": dominio,
+                        },
+                    )
+                    return generic_response
+
+                # Admin ou conta inativa: trata como se não existisse
+                # (sem oracle de role/estado, igual ao login).
+                if user.is_clama_admin or not user.is_active:
+                    logger.info(
+                        "Forgot-password ignorado (admin/inativo)",
+                        extra={
+                            "event": "customer_forgot_password_ignored",
+                            "user_id": user.pk,
+                            "is_admin": user.is_clama_admin,
+                            "is_active": user.is_active,
+                        },
+                    )
+                    return generic_response
+
+                senha_temp = gerar_senha_temporaria()
+                user.set_password(senha_temp)
+                user.force_change_password = True
+                user.save(
+                    update_fields=["password", "force_change_password"]
+                )
+
+                primeiro_nome = (
+                    user.nome_completo.split()[0]
+                    if user.nome_completo
+                    else "Amada"
+                )
+
+            # Envio FORA da transação — não seguramos o lock durante o I/O
+            # de rede do SMTP. A senha já está persistida; se o e-mail
+            # falhar, o `@with_retry` tenta 3x e o Sentry registra. A
+            # resposta continua genérica (sem oracle de falha de envio).
+            try:
+                enviar_email_recuperacao_senha(
+                    email_destino=user.email,
+                    primeiro_nome=primeiro_nome,
+                    senha_temporaria=senha_temp,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Falha ao enviar e-mail de recuperação de senha",
+                    extra={
+                        "event": "customer_forgot_password_email_failed",
+                        "user_id": user.pk,
+                        "error": str(exc),
+                    },
+                )
+
+            return generic_response
+
+        except Exception as exc:  # noqa: BLE001
+            # Defesa em profundidade: qualquer erro inesperado não pode
+            # virar oracle de enumeração via status code diferente.
+            logger.error(
+                "Erro inesperado no forgot-password",
+                extra={
+                    "event": "customer_forgot_password_unexpected_error",
+                    "error": str(exc),
+                },
+            )
+            return generic_response
 
 
 class CustomerMeView(APIView):
