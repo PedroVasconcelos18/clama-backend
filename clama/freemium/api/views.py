@@ -651,6 +651,12 @@ class FreemiumConfirmarView(APIView):
                 nome_completo=pedido.nome,
                 cpf_cnpj=pedido.cpf_cnpj,
                 telefone=pedido.telefone,
+                # idade/sexo do Pedido pré-preenchem o form de pedido do
+                # customer (SexoCadastro espelha Pedido.Sexo). Sem isto a
+                # conta nascia com idade/sexo vazios mesmo o usuário tendo
+                # informado no cadastro freemium.
+                idade=pedido.idade,
+                sexo=pedido.sexo,
                 force_change_password=True,
                 freemium_used_at=timezone.now(),
             )
