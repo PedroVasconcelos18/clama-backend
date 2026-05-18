@@ -72,6 +72,7 @@ DJANGO_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.admin",
     "django.forms",
+    "django.contrib.sitemaps",
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
@@ -96,6 +97,7 @@ LOCAL_APPS = [
     "clama.documents",
     "clama.freemium",
     "clama.customers",
+    "clama.blog",
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -145,6 +147,10 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Marca request.is_build_token quando Vike (Vercel build) envia
+    # X-Build-Token matching BUILD_API_TOKEN — usado pra bypass de
+    # restrições externas em staging. Em prod é no-op.
+    "clama.blog.middleware.BuildTokenAuthMiddleware",
 ]
 
 # CORS
@@ -326,6 +332,16 @@ CELERY_BEAT_SCHEDULE = {
         # uso atual; preferimos 6h pra detectar problema mais cedo.
         "schedule": crontab(minute=17, hour="*/6"),
     },
+    "blog-alerta-comentarios-diario": {
+        "task": "clama.blog.tasks.enviar_alerta_comentarios_diario",
+        # 08:00 BRT — admin lê com café da manhã.
+        "schedule": crontab(minute=0, hour=8),
+    },
+    "blog-purgar-ips-antigos": {
+        "task": "clama.blog.tasks.purgar_ips_antigos",
+        # 03:00 BRT — janela de baixo tráfego (LGPD compliance: IP > 180d).
+        "schedule": crontab(minute=0, hour=3),
+    },
 }
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#worker-send-task-events
 CELERY_WORKER_SEND_TASK_EVENTS = True
@@ -366,6 +382,12 @@ REST_FRAMEWORK = {
         # (anti spray pós-takeover de sessão).
         "customer_login": "5/min",
         "customer_change_password": "10/hour",
+        # Recuperação de senha ("Esqueci minha senha") por IP. Endpoint
+        # anônimo que dispara e-mail com senha temporária — janela apertada
+        # para não permitir email-bombing de uma vítima nem enumeração via
+        # timing/volume. 3/h é folgado pro caso legítimo (errou o e-mail,
+        # tentou de novo) e hostil pro abuso.
+        "customer_forgot_password": "3/hour",
     },
     "EXCEPTION_HANDLER": "clama.core.handlers.pastoral_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -396,6 +418,12 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "API do Clama - Plataforma de oração pastoral personalizada",
     "VERSION": CLAMA_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
+    # Evita colisões automáticas tipo "Status755Enum" quando múltiplos models
+    # têm um campo `status` com choices distintas (ex.: PedidoStatus vs PostStatus).
+    "ENUM_NAME_OVERRIDES": {
+        "PedidoStatusEnum": "clama.orders.models.PedidoStatus.choices",
+        "PostStatusEnum": "clama.blog.models.PostStatus.choices",
+    },
 }
 
 # Encrypted Model Fields
@@ -435,6 +463,29 @@ FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default=FRONTEND_URL)
 # de confirmação freemium aponta para `BACKEND_PUBLIC_URL/api/freemium/confirmar/`).
 # Em local default aponta pro próprio backend Django.
 BACKEND_PUBLIC_URL = env("BACKEND_PUBLIC_URL", default="http://localhost:8000")
+
+# Blog (Story 2.12)
+# -------------------------------------------------------------------------------
+# Vercel Deploy Hook URL — chamada após publicar/despublicar/excluir post pra
+# rebuildar o frontend SSG. Em local pode ficar vazio: task degrada como no-op
+# com log warning.
+VERCEL_DEPLOY_HOOK_URL = env("VERCEL_DEPLOY_HOOK_URL", default="")
+
+# Chave IndexNow — usada pra notificar search engines de novos posts publicados.
+# Best-effort: task ignora falhas (não dispara Sentry) e degrada como no-op se vazio.
+INDEXNOW_KEY = env("INDEXNOW_KEY", default="")
+
+# Base URL pública do blog (frontend SSG). Usada para montar URLs canônicas
+# nos payloads de IndexNow.
+FRONTEND_PUBLIC_BLOG_BASE_URL = env(
+    "FRONTEND_PUBLIC_BLOG_BASE_URL",
+    default="https://clama.me",
+)
+
+# Token compartilhado entre Vercel build (Vike) e backend pra autorizar
+# fetch de endpoints públicos em staging com IP allowlist. Em prod fica
+# vazio (API pública sem restrição). Middleware: `BuildTokenAuthMiddleware`.
+BUILD_API_TOKEN = env("BUILD_API_TOKEN", default="")
 
 # Anthropic (Claude API)
 # -------------------------------------------------------------------------------

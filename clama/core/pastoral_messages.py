@@ -245,3 +245,11 @@ MSG_CUSTOMER_PASSWORD_TROCADA = (
 MSG_CUSTOMER_FORCE_CHANGE_PASSWORD = (
     "Antes de continuar, atualize sua senha."
 )
+
+# Resposta SEMPRE genérica do /forgot-password/ — não revela se o e-mail
+# existe na base (anti-enumeração de contas). Mesma mensagem para e-mail
+# cadastrado, inexistente ou de admin.
+MSG_CUSTOMER_FORGOT_PASSWORD_ENVIADO = (
+    "Se este e-mail estiver cadastrado, você receberá uma senha "
+    "temporária em instantes. Verifique também a caixa de spam."
+)

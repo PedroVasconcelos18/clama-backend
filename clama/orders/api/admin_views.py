@@ -79,6 +79,12 @@ class AdminPedidoListView(AdminGenericAPIView, ListAPIView):
         if created_before:
             queryset = queryset.filter(created_at__date__lte=created_before)
 
+        # Filtro por user (usado pela tela admin/customers ao expandir pedidos
+        # de um customer especifico).
+        user_id = self.request.query_params.get("user_id")
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+
         # Busca por nome ou email
         q = self.request.query_params.get("q")
         if q:

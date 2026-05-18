@@ -212,3 +212,73 @@ def enviar_email_confirmacao_freemium(
             "pedido_id": str(pedido.id),
         },
     )
+
+
+@with_retry(
+    max_attempts=3,
+    backoff_seconds=[1, 2, 4],
+    retriable_exceptions=_EMAIL_RETRY_EXCEPTIONS,
+)
+def enviar_email_recuperacao_senha(
+    email_destino: str,
+    primeiro_nome: str,
+    senha_temporaria: str,
+) -> None:
+    """
+    Envia o e-mail de recuperação de senha (fluxo "Esqueci minha senha").
+
+    Disparado **síncrono** pela `ForgotPasswordView` quando o e-mail existe
+    e é de um customer ativo. A view já gerou a senha temporária, aplicou
+    no `User` (`set_password`) e setou `force_change_password=True`; aqui só
+    entregamos a credencial. O `@with_retry` espelha os outros envios do
+    fluxo freemium (3 tentativas internas + backoff) — não há camada Celery
+    aqui porque o envio é síncrono no request.
+
+    NÃO depende de `Pedido` — recuperação de senha é independente de
+    pedidos. O log não inclui a senha (apenas o domínio do e-mail para
+    diagnóstico sem vazar PII).
+
+    Args:
+        email_destino: e-mail do customer (login).
+        primeiro_nome: primeiro nome para personalização (fallback "Amada").
+        senha_temporaria: senha temporária recém-gerada (texto plano,
+            usada uma única vez no template; nunca logada).
+    """
+    nome = primeiro_nome or "Amada"
+
+    frontend_base = (
+        getattr(settings, "FRONTEND_BASE_URL", "")
+        or getattr(settings, "FRONTEND_URL", "")
+        or "http://localhost:5173"
+    ).rstrip("/")
+    login_url = f"{frontend_base}/login"
+
+    context = {
+        "primeiro_nome": nome,
+        "login_email": email_destino,
+        "senha_temporaria": senha_temporaria,
+        "login_url": login_url,
+    }
+
+    body_html = render_to_string("email/recuperacao_senha.html", context)
+    body_text = render_to_string("email/recuperacao_senha.txt", context)
+
+    subject = "Sua nova senha temporária — Clama"
+    email = EmailMultiAlternatives(
+        subject=subject,
+        body=body_text,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[email_destino],
+        reply_to=["contato@clama.me"],
+    )
+    email.attach_alternative(body_html, "text/html")
+    email.send()
+
+    dominio = email_destino.rsplit("@", 1)[-1] if "@" in email_destino else "?"
+    logger.info(
+        "Email de recuperação de senha enviado",
+        extra={
+            "event": "email_recuperacao_senha_sent",
+            "email_dominio": dominio,
+        },
+    )

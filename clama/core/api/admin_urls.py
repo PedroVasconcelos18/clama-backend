@@ -16,6 +16,10 @@ from clama.orders.api.admin_views import (
 )
 from clama.plans.api.admin_views import AdminPlanViewSet
 from clama.prompts.api.admin_views import AdminPromptTemplateViewSet
+from clama_backend.users.api.admin_customer_views import (
+    AdminCustomerDetailView,
+    AdminCustomerListView,
+)
 
 app_name = "admin_api"
 
@@ -28,6 +32,13 @@ router.register("admin/documentos", AdminDocumentoContextoViewSet, basename="adm
 urlpatterns = [
     # ViewSets
     path("", include(router.urls)),
+    # Customers
+    path("admin/customers/", AdminCustomerListView.as_view(), name="customers-list"),
+    path(
+        "admin/customers/<int:id>/",
+        AdminCustomerDetailView.as_view(),
+        name="customers-detail",
+    ),
     # Pedidos
     path("admin/pedidos/", AdminPedidoListView.as_view(), name="pedidos-list"),
     path("admin/pedidos/<uuid:id>/", AdminPedidoDetailView.as_view(), name="pedidos-detail"),

@@ -3,6 +3,25 @@ from django.db import models
 from encrypted_model_fields.fields import EncryptedCharField
 
 
+class NomeFormatBlog(models.TextChoices):
+    """Como o nome do customer aparece em comentários/likes do blog (FR32)."""
+
+    COMPLETO = "completo", "Nome completo (Juliana Silva)"
+    COMPACTO = "compacto", "Primeiro nome + inicial (Juliana S.)"
+
+
+class SexoCadastro(models.TextChoices):
+    """Sexo no cadastro do customer — espelha as choices de Pedido.Sexo.
+
+    Definido aqui (não importado de orders) pra manter a camada de auth
+    desacoplada de orders.
+    """
+
+    FEMININO = "feminino", "Feminino"
+    MASCULINO = "masculino", "Masculino"
+    NAO_INFORMADO = "nao_informado", "Não informado"
+
+
 class UserManager(BaseUserManager):
     """
     Manager customizado para User com métodos de conveniência.
@@ -98,6 +117,15 @@ class User(AbstractUser):
         help_text="Indica que o usuário deve trocar a senha no próximo login.",
     )
 
+    # Formato do nome em comentários/likes do blog (FR32). Default compacto
+    # é privacy-friendly: "Juliana S." em vez de "Juliana Silva" completo.
+    nome_format_blog = models.CharField(
+        "Formato do nome no blog",
+        max_length=20,
+        choices=NomeFormatBlog.choices,
+        default=NomeFormatBlog.COMPACTO,
+    )
+
     # Hashes determinísticos (HMAC-SHA-256 via FREEMIUM_HASH_SECRET) para
     # lookup do user-existence gate da Landing Page sem expor cleartext nem
     # depender de filter direto sobre EncryptedCharField (que não suporta).
@@ -134,6 +162,23 @@ class User(AbstractUser):
         blank=True,
         db_index=True,
         verbose_name="Pedido gratuito consumido em",
+    )
+
+    # Dados do destinatário padrão das orações deste customer. Não são parte
+    # da identidade (cada Pedido ainda tem sua própria idade/sexo, pois a
+    # oração pode ser pra terceiros) — servem só pra pré-preencher o form na
+    # /conta. Backfill inicial vem do pedido mais recente (migração).
+    idade = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Idade (pré-preenchimento)",
+    )
+    sexo = models.CharField(
+        max_length=20,
+        choices=SexoCadastro.choices,
+        blank=True,
+        default="",
+        verbose_name="Sexo (pré-preenchimento)",
     )
 
     objects = UserManager()

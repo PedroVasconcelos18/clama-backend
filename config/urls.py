@@ -1,7 +1,9 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
+from django.contrib.sitemaps.views import sitemap
 from django.urls import include, path
+from django.views.generic import TemplateView
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularRedocView,
@@ -9,7 +11,11 @@ from drf_spectacular.views import (
 )
 from rest_framework.routers import DefaultRouter
 
+from clama.blog.sitemaps import PostSitemap
+
 router = DefaultRouter()
+
+sitemaps = {"blog": PostSitemap}
 
 urlpatterns = [
     path(settings.ADMIN_URL, admin.site.urls),
@@ -33,6 +39,21 @@ urlpatterns = [
     path("api/customer/", include("clama.customers.api.urls")),
     # Admin API (pedidos, metrics, planos, prompts)
     path("api/", include("clama.core.api.admin_urls")),
+    # Blog API (admin CRUD; endpoints públicos virão na Story 3.1)
+    path("api/", include("clama.blog.urls")),
+    # Blog SEO infra
+    path("sitemap.xml", sitemap, {"sitemaps": sitemaps}, name="sitemap"),
+    path(
+        "robots.txt",
+        TemplateView.as_view(
+            template_name="robots.txt",
+            content_type="text/plain",
+            extra_context={
+                "sitemap_url": f"{settings.FRONTEND_PUBLIC_BLOG_BASE_URL.rstrip('/')}/sitemap.xml",
+            },
+        ),
+        name="robots",
+    ),
     # API Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

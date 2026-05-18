@@ -64,13 +64,27 @@ class AdminTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class CustomerUserSerializer(serializers.ModelSerializer):
     """
-    Serializer público dos dados do customer. Tudo read-only — payload
-    consumido por `/customer/auth/login/`, `/customer/me/` e
+    Serializer público dos dados do customer. Payload consumido por
+    `/customer/auth/login/`, `/customer/me/` (GET + PATCH) e
     `/customer/auth/change-password/`.
 
-    Mantemos o set de campos enxuto (frozen line "Ask First" da spec):
-    `id, email, nome_completo, force_change_password, freemium_used_at`.
+    `nome_format_blog` é o único campo EDITÁVEL via PATCH /me/ (FR32 —
+    customer escolhe entre 'completo'/'compacto' para o nome em
+    comentários/likes do blog).
+
+    `cpf_cnpj`/`telefone` são EncryptedCharField (o ModelSerializer não os
+    auto-mapeia) — expostos read-only via SerializerMethodField pra
+    pré-preencher o form de novo pedido na /conta (dados do próprio dono).
     """
+
+    cpf_cnpj = serializers.SerializerMethodField()
+    telefone = serializers.SerializerMethodField()
+
+    def get_cpf_cnpj(self, obj: User) -> str:
+        return obj.cpf_cnpj or ""
+
+    def get_telefone(self, obj: User) -> str:
+        return obj.telefone or ""
 
     class Meta:
         model = User
@@ -80,8 +94,21 @@ class CustomerUserSerializer(serializers.ModelSerializer):
             "nome_completo",
             "force_change_password",
             "freemium_used_at",
+            "nome_format_blog",
+            "cpf_cnpj",
+            "telefone",
+            "idade",
+            "sexo",
         ]
-        read_only_fields = fields
+        read_only_fields = [
+            "id",
+            "email",
+            "nome_completo",
+            "force_change_password",
+            "freemium_used_at",
+            "idade",
+            "sexo",
+        ]
 
 
 class CustomerTokenObtainPairSerializer(TokenObtainPairSerializer):

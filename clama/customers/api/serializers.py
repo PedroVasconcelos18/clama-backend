@@ -40,7 +40,24 @@ class CustomerLoginInvalidoError(PastoralAPIException):
 
 
 class CustomerUserSerializer(serializers.ModelSerializer):
-    """Subset do User retornado por login/refresh/me."""
+    """Subset do User retornado por login/refresh/me.
+
+    `nome_format_blog` é o único campo editável via PATCH /me/ (FR32 —
+    customer escolhe entre 'completo' e 'compacto').
+
+    `cpf_cnpj`/`telefone` são EncryptedCharField — o ModelSerializer não os
+    auto-mapeia, então declaramos explícito (read-only, dado do próprio dono
+    pra pré-preencher o form de pedido na /conta).
+    """
+
+    cpf_cnpj = serializers.SerializerMethodField()
+    telefone = serializers.SerializerMethodField()
+
+    def get_cpf_cnpj(self, obj: User) -> str:
+        return obj.cpf_cnpj or ""
+
+    def get_telefone(self, obj: User) -> str:
+        return obj.telefone or ""
 
     class Meta:
         model = User
@@ -50,8 +67,26 @@ class CustomerUserSerializer(serializers.ModelSerializer):
             "nome_completo",
             "force_change_password",
             "freemium_used_at",
+            "nome_format_blog",
+            # Dados de cadastro do próprio dono — usados pra pré-preencher o
+            # form de novo pedido na /conta (self-service). Diferente do
+            # serializer de PEDIDOS, que omite por ser contexto de listagem.
+            "cpf_cnpj",
+            "telefone",
+            "idade",
+            "sexo",
         ]
-        read_only_fields = fields
+        # cpf_cnpj/telefone são SerializerMethodField (já read-only) — não
+        # entram em read_only_fields (DRF rejeita).
+        read_only_fields = [
+            "id",
+            "email",
+            "nome_completo",
+            "force_change_password",
+            "freemium_used_at",
+            "idade",
+            "sexo",
+        ]
 
 
 class CustomerTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -141,6 +176,24 @@ class ChangePasswordSerializer(serializers.Serializer):
         except DjangoValidationError as exc:
             raise serializers.ValidationError(list(exc.messages)) from exc
         return value
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    """
+    Body do `POST /api/customer/auth/forgot-password/`.
+
+    Só valida o **formato** do e-mail. Deliberadamente NÃO verifica se o
+    e-mail existe na base — a view responde sempre a mesma mensagem
+    genérica (anti-enumeração de contas, ver
+    `MSG_CUSTOMER_FORGOT_PASSWORD_ENVIADO`).
+    """
+
+    email = serializers.EmailField(required=True)
+
+    def validate_email(self, value: str) -> str:
+        # Normaliza pra lookup case-insensitive consistente com o login
+        # (`User.objects.get(email__iexact=...)`).
+        return value.strip()
 
 
 class CustomerPedidoListSerializer(serializers.ModelSerializer):

@@ -33,11 +33,20 @@ def backfill_hashes(apps, schema_editor):
     )
     from clama_backend.users.models import User
 
-    for user in User.objects.all():
-        user.email_hash = hash_email(user.email or "")
-        user.cpf_hash = hash_cpf_cnpj(user.cpf_cnpj or "")
-        user.telefone_hash = hash_telefone(user.telefone or "")
-        user.save(update_fields=["email_hash", "cpf_hash", "telefone_hash"])
+    # `.only(...)` limita o SELECT às colunas que existiam quando essa
+    # migration foi escrita. `update()` (em vez de `save()`) emite um
+    # UPDATE direto sem re-SELECT, evitando referenciar colunas adicionadas
+    # em migrations futuras (ex.: `nome_format_blog` na 0008) que ainda
+    # não existem na DB neste ponto da chain.
+    qs = User.objects.only(
+        "id", "email", "cpf_cnpj", "telefone"
+    ).iterator()
+    for user in qs:
+        User.objects.filter(pk=user.pk).update(
+            email_hash=hash_email(user.email or ""),
+            cpf_hash=hash_cpf_cnpj(user.cpf_cnpj or ""),
+            telefone_hash=hash_telefone(user.telefone or ""),
+        )
 
 
 def reverse_noop(apps, schema_editor):

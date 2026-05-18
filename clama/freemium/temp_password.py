@@ -13,12 +13,32 @@ expirou". Um warning vai pro Sentry para diagnóstico.
 """
 
 import logging
+import secrets
 
 import sentry_sdk
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 
 logger = logging.getLogger("clama.freemium.temp_password")
+
+# Charset da senha temporária — exclui caracteres ambíguos (0/O/o, I/l/1)
+# para reduzir confusão quando a pessoa digita do e-mail. ~14 chars desse
+# charset ≈ 80 bits de entropia. Espelha o ALPHABET_SENHA usado na saga
+# freemium (`clama/freemium/api/views.py`); centralizado aqui para reuso
+# pelo fluxo de recuperação de senha sem acoplar às views do freemium.
+ALPHABET_SENHA_TEMP = (
+    "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    "abcdefghijkmnpqrstuvwxyz"
+    "23456789"
+)
+
+
+def gerar_senha_temporaria(tamanho: int = 14) -> str:
+    """
+    Gera senha temporária usando charset sem ambiguidade
+    (sem 0/O/o/I/l/1). 14 chars ≈ 80 bits de entropia.
+    """
+    return "".join(secrets.choice(ALPHABET_SENHA_TEMP) for _ in range(tamanho))
 
 
 def _fernet() -> Fernet:
