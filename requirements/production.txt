@@ -3,3 +3,4 @@
 # Production specific
 # ------------------------------------------------------------------------------
 # No additional production dependencies for now
+bleach>=6.0
