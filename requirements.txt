@@ -24,6 +24,12 @@ django-celery-beat>=2.6.0
 # Security
 argon2-cffi>=23.1.0
 django-encrypted-model-fields>=0.6.5
+# Blog (Story 1.1) — DEVE espelhar requirements/base.txt. Este arquivo é uma
+# cópia manual inline pro Railway; se adicionar dep em base.txt, replicar AQUI
+# ou o deploy crasha (ModuleNotFoundError).
+bleach>=6.0
+django-csp>=3.7,<4.0
+django-ratelimit>=4.1
 
 # Logging
 python-json-logger>=2.0.7
