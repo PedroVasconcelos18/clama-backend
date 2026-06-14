@@ -129,3 +129,82 @@ class TestAdminPedidoReenviar:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         )
+
+
+@pytest.mark.django_db
+class TestAdminPedidoMarcarGratuito:
+    """Testes para POST /api/admin/pedidos/{id}/marcar-gratuito/."""
+
+    def test_marca_gratuito_e_dispara_task(
+        self, api_client, django_capture_on_commit_callbacks
+    ):
+        pedido = PedidoFactory(
+            status=PedidoStatus.AGUARDANDO_PAGAMENTO,
+            valor_centavos=2000,
+            eh_gratuito=False,
+        )
+        url = reverse("admin_api:pedidos-marcar-gratuito", kwargs={"id": pedido.id})
+
+        with patch(
+            "clama.prayer_generation.tasks.gerar_oracao_task.delay"
+        ) as mock_gerar:
+            with django_capture_on_commit_callbacks(execute=True):
+                response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        pedido.refresh_from_db()
+        assert pedido.eh_gratuito is True
+        assert pedido.valor_centavos == 0
+        assert pedido.status == PedidoStatus.GERANDO_ORACAO
+        mock_gerar.assert_called_once_with(str(pedido.id))
+
+    def test_enviada_retorna_409(self, api_client):
+        pedido = PedidoFactory(status=PedidoStatus.ENVIADA)
+        url = reverse("admin_api:pedidos-marcar-gratuito", kwargs={"id": pedido.id})
+
+        with patch(
+            "clama.prayer_generation.tasks.gerar_oracao_task.delay"
+        ) as mock_gerar:
+            response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        mock_gerar.assert_not_called()
+
+    def test_idempotente_nao_redispara(self, api_client):
+        pedido = PedidoFactory(
+            status=PedidoStatus.GERANDO_ORACAO,
+            eh_gratuito=True,
+            valor_centavos=0,
+        )
+        url = reverse("admin_api:pedidos-marcar-gratuito", kwargs={"id": pedido.id})
+
+        with patch(
+            "clama.prayer_generation.tasks.gerar_oracao_task.delay"
+        ) as mock_gerar:
+            response = api_client.post(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_gerar.assert_not_called()
+
+    def test_pedido_inexistente_retorna_404(self, api_client):
+        import uuid
+
+        url = reverse(
+            "admin_api:pedidos-marcar-gratuito", kwargs={"id": uuid.uuid4()}
+        )
+        response = api_client.post(url)
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_sem_auth_retorna_401(self):
+        pedido = PedidoFactory()
+        client = APIClient()
+        url = reverse("admin_api:pedidos-marcar-gratuito", kwargs={"id": pedido.id})
+        response = client.post(url)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_detail_expoe_eh_gratuito(self, api_client):
+        pedido = PedidoFactory(eh_gratuito=True)
+        url = reverse("admin_api:pedidos-detail", kwargs={"id": pedido.id})
+        response = api_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["eh_gratuito"] is True

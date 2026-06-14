@@ -2,6 +2,7 @@
 Views da API de pedidos.
 """
 
+from django.db import transaction
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.generics import CreateAPIView, RetrieveAPIView
@@ -14,6 +15,7 @@ from clama.core.permissions import IsCustomerPasswordCurrent
 from clama.core.throttles import EmailScopedThrottle
 from clama.orders.api.serializers import (
     PedidoCreateSerializer,
+    PedidoGratuitoCreateSerializer,
     PedidoResponseSerializer,
     PedidoStatusSerializer,
 )
@@ -95,6 +97,61 @@ class PedidoCreateView(CreateAPIView):
                 status_codes=["201"],
             ),
         ],
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
+
+class PedidoGratuitoCreateView(CreateAPIView):
+    """
+    Cria um pedido de oração GRATUITO (usuário autenticado, card "Gratuito"
+    em Minha Conta).
+
+    Não passa pelo Asaas: o pedido nasce `eh_gratuito=True` em
+    `GERANDO_ORACAO` e a geração da oração é disparada na hora. Sem trava
+    freemium (grátis ilimitado nesta tela autenticada, por decisão de
+    produto).
+
+    Exige `IsAuthenticated` + `IsCustomerPasswordCurrent` (mesma postura do
+    fluxo pago).
+    """
+
+    serializer_class = PedidoGratuitoCreateSerializer
+    permission_classes = [IsAuthenticated, IsCustomerPasswordCurrent]
+    throttle_classes = [ScopedRateThrottle, EmailScopedThrottle]
+    throttle_scope = "pedidos_create"
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        pedido = serializer.save()
+
+        # Dispara a geração após o commit (padrão do webhook/freemium).
+        from clama.prayer_generation.tasks import gerar_oracao_task
+
+        pedido_id = str(pedido.id)
+        transaction.on_commit(lambda: gerar_oracao_task.delay(pedido_id))
+
+        response_serializer = PedidoResponseSerializer(pedido)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        tags=["Pedidos"],
+        summary="Criar pedido de oração gratuito",
+        description=(
+            "Cria um pedido gratuito e dispara a geração da oração, sem "
+            "pagamento. Apenas usuário autenticado."
+        ),
+        request=PedidoGratuitoCreateSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=PedidoResponseSerializer,
+                description="Pedido gratuito criado e geração disparada",
+            ),
+            400: OpenApiResponse(description="Erro de validação"),
+            401: OpenApiResponse(description="Não autenticado"),
+            429: OpenApiResponse(description="Rate limit excedido"),
+        },
     )
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)

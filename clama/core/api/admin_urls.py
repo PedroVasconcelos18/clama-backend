@@ -12,6 +12,7 @@ from clama.documents.api.admin_views import AdminDocumentoContextoViewSet
 from clama.orders.api.admin_views import (
     AdminPedidoDetailView,
     AdminPedidoListView,
+    AdminPedidoMarcarGratuitoView,
     AdminPedidoReenviarView,
 )
 from clama.plans.api.admin_views import AdminPlanViewSet
@@ -43,6 +44,11 @@ urlpatterns = [
     path("admin/pedidos/", AdminPedidoListView.as_view(), name="pedidos-list"),
     path("admin/pedidos/<uuid:id>/", AdminPedidoDetailView.as_view(), name="pedidos-detail"),
     path("admin/pedidos/<uuid:id>/reenviar/", AdminPedidoReenviarView.as_view(), name="pedidos-reenviar"),
+    path(
+        "admin/pedidos/<uuid:id>/marcar-gratuito/",
+        AdminPedidoMarcarGratuitoView.as_view(),
+        name="pedidos-marcar-gratuito",
+    ),
     # Métricas
     path("admin/metrics/overview/", OverviewMetricsView.as_view(), name="metrics-overview"),
     path("admin/metrics/distribution/", DistributionMetricsView.as_view(), name="metrics-distribution"),

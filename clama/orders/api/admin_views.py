@@ -2,6 +2,7 @@
 Views admin para pedidos.
 """
 
+from django.db import transaction
 from django.db.models import Q
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
@@ -232,5 +233,64 @@ class AdminPedidoReenviarView(AdminAPIView):
 
         return Response(
             {"status": "ok", "message": "Reenvio disparado"},
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminPedidoMarcarGratuitoView(AdminAPIView):
+    """
+    Marca um pedido como gratuito (fluxo admin).
+
+    Dispensa o pagamento, zera o valor e dispara a geração da oração
+    sem passar pelo gateway Asaas. Bloqueado apenas para pedidos já
+    enviados (status ENVIADA).
+    """
+
+    @extend_schema(
+        tags=["Admin / Pedidos"],
+        summary="Marcar pedido como gratuito",
+        description=(
+            "Converte o pedido em gratuito e dispara a geração da oração "
+            "(sem pagamento). Recusa pedidos já enviados."
+        ),
+        responses={
+            200: OpenApiResponse(description="Pedido marcado como gratuito"),
+            401: OpenApiResponse(description="Não autenticado"),
+            403: OpenApiResponse(description="Não é admin"),
+            404: OpenApiResponse(description="Pedido não encontrado"),
+            409: OpenApiResponse(description="Pedido já enviado"),
+        },
+    )
+    def post(self, request, id):
+        try:
+            pedido = Pedido.objects.get(id=id)
+        except Pedido.DoesNotExist:
+            raise PastoralAPIException(
+                code="not_found",
+                message="Pedido não encontrado",
+                pastoral_message="Esse pedido não foi encontrado.",
+                status_code=404,
+            )
+
+        # Levanta PastoralAPIException 409 se status == ENVIADA.
+        disparar = pedido.marcar_como_gratuito()
+
+        if disparar:
+            # Import local para evitar circular import (padrão do webhook/reenviar).
+            from clama.prayer_generation.tasks import gerar_oracao_task
+
+            pedido_id = str(pedido.id)
+            transaction.on_commit(lambda: gerar_oracao_task.delay(pedido_id))
+
+            return Response(
+                {
+                    "status": "ok",
+                    "message": "Pedido marcado como gratuito. Gerando oração.",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            {"status": "ok", "message": "Pedido já estava marcado como gratuito."},
             status=status.HTTP_200_OK,
         )

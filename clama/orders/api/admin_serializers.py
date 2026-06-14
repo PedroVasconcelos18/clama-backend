@@ -93,6 +93,7 @@ class AdminPedidoDetailSerializer(serializers.ModelSerializer):
             "plano",
             "valor_centavos",
             "valor_reais_str",
+            "eh_gratuito",
             # Status e canal
             "status",
             "canal_entrega",

@@ -266,3 +266,37 @@ class Pedido(UUIDPKModel, TimestampedModel):
             )
         self.status = PedidoStatus.PAGO
         self.save(update_fields=["status", "updated_at"])
+
+    def marcar_como_gratuito(self) -> bool:
+        """
+        Converte o pedido em gratuito (fluxo admin): dispensa o pagamento,
+        zera o valor e transiciona para GERANDO_ORACAO.
+
+        Retorna ``True`` se houve transição (o chamador deve disparar a
+        ``gerar_oracao_task``) ou ``False`` se foi no-op idempotente
+        (pedido já gratuito e já gerando — não re-disparar).
+
+        Raises:
+            PastoralAPIException: se o pedido já foi enviado (status ENVIADA).
+        """
+        if self.status == PedidoStatus.ENVIADA:
+            raise PastoralAPIException(
+                code="invalid_state_transition",
+                message="Pedido já enviado não pode ser marcado como gratuito",
+                pastoral_message=(
+                    "Esse pedido já foi enviado — não dá para marcá-lo como gratuito."
+                ),
+                status_code=409,
+            )
+
+        # Idempotência: já convertido e já em geração → no-op.
+        if self.eh_gratuito and self.status == PedidoStatus.GERANDO_ORACAO:
+            return False
+
+        self.eh_gratuito = True
+        self.valor_centavos = 0
+        self.status = PedidoStatus.GERANDO_ORACAO
+        self.save(
+            update_fields=["eh_gratuito", "valor_centavos", "status", "updated_at"]
+        )
+        return True

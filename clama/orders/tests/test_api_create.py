@@ -165,12 +165,21 @@ class TestPedidoCreateValidation:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_valor_below_minimum_returns_400(self, api_client, valid_pedido_data):
-        """Valor abaixo de R$ 6,99 (699 centavos) retorna 400."""
-        valid_pedido_data["valor_centavos"] = 698
+        """Valor abaixo de R$ 5,99 (599 centavos) retorna 400."""
+        valid_pedido_data["valor_centavos"] = 598
         url = reverse("pedido-create")
         response = api_client.post(url, valid_pedido_data, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_valor_no_minimo_599_sucesso(self, api_client, valid_pedido_data):
+        """Valor exatamente R$ 5,99 (599 centavos) é aceito (valor livre)."""
+        valid_pedido_data["valor_centavos"] = 599
+        valid_pedido_data.pop("plano", None)  # força inferência por valor livre
+        url = reverse("pedido-create")
+        response = api_client.post(url, valid_pedido_data, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
 
     def test_whatsapp_without_telefone_returns_400(self, api_client, valid_pedido_data):
         """WhatsApp sem telefone retorna 400."""
@@ -293,7 +302,7 @@ class TestPedidoCreateValorLivre:
         assert pedido.valor_centavos == 15000
 
     def test_valor_livre_abaixo_minimo_retorna_400(self, api_client, tres_planos):
-        """Valor < R$ 6,99 deve ser rejeitado mesmo sem plano explícito."""
+        """Valor < R$ 5,99 deve ser rejeitado mesmo sem plano explícito."""
         data = {**self._base_data(), "valor_centavos": 500}
         url = reverse("pedido-create")
         response = api_client.post(url, data, format="json")

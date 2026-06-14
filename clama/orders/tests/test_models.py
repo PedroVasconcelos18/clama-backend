@@ -182,3 +182,68 @@ class TestPedidoPlanoRelationship:
         pedido = PedidoFactory(plano=plano)
         assert plano.pedidos.count() == 1
         assert plano.pedidos.first() == pedido
+
+
+@pytest.mark.django_db
+class TestMarcarComoGratuito:
+    """Testes do método de domínio Pedido.marcar_como_gratuito()."""
+
+    def test_converte_aguardando_pagamento(self):
+        pedido = PedidoFactory(
+            status=PedidoStatus.AGUARDANDO_PAGAMENTO,
+            valor_centavos=2000,
+            eh_gratuito=False,
+        )
+
+        disparar = pedido.marcar_como_gratuito()
+
+        pedido.refresh_from_db()
+        assert pedido.eh_gratuito is True
+        assert pedido.valor_centavos == 0
+        assert pedido.status == PedidoStatus.GERANDO_ORACAO
+        assert disparar is True  # houve transição → chamador deve disparar task
+
+    @pytest.mark.parametrize(
+        "status_inicial",
+        [
+            PedidoStatus.ERRO,
+            PedidoStatus.PAGO,
+            PedidoStatus.AGUARDANDO_CONFIRMACAO_EMAIL,
+            PedidoStatus.ORACAO_GERADA,
+            PedidoStatus.AGUARDANDO_REENVIO,
+        ],
+    )
+    def test_converte_de_status_nao_enviado(self, status_inicial):
+        pedido = PedidoFactory(status=status_inicial, valor_centavos=2000)
+
+        disparar = pedido.marcar_como_gratuito()
+
+        pedido.refresh_from_db()
+        assert pedido.eh_gratuito is True
+        assert pedido.valor_centavos == 0
+        assert pedido.status == PedidoStatus.GERANDO_ORACAO
+        assert disparar is True
+
+    def test_enviada_levanta_excecao(self):
+        pedido = PedidoFactory(status=PedidoStatus.ENVIADA, valor_centavos=2000)
+
+        with pytest.raises(PastoralAPIException) as exc:
+            pedido.marcar_como_gratuito()
+
+        assert exc.value.status_code == 409
+        pedido.refresh_from_db()
+        assert pedido.eh_gratuito is False  # inalterado
+
+    def test_idempotente_quando_ja_gratuito_e_gerando(self):
+        pedido = PedidoFactory(
+            status=PedidoStatus.GERANDO_ORACAO,
+            valor_centavos=0,
+            eh_gratuito=True,
+        )
+
+        disparar = pedido.marcar_como_gratuito()
+
+        pedido.refresh_from_db()
+        assert disparar is False  # no-op → chamador NÃO re-dispara
+        assert pedido.status == PedidoStatus.GERANDO_ORACAO
+        assert pedido.eh_gratuito is True
