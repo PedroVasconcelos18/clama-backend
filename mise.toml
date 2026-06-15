@@ -1,0 +1,15 @@
+# Configuração do mise para o build (Railway/Nixpacks).
+#
+# Por que este arquivo existe:
+# Versões recentes do mise (>= 2026.x) verificam GitHub artifact attestations
+# ao baixar o CPython. As builds standalone do Python 3.12.3 (de
+# python-build-standalone) NÃO publicam essas attestations, então o build
+# falha com "No GitHub artifact attestations found for python@3.12.3".
+# Desligamos a verificação para destravar o deploy. Equivalente à env var
+# MISE_PYTHON_GITHUB_ATTESTATIONS=false.
+#
+# A versão do Python continua sendo definida pelo runtime.txt (python-3.12.3);
+# não a duplicamos aqui para manter uma única fonte de verdade.
+
+[settings]
+python.github_attestations = false
