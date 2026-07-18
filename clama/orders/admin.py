@@ -26,8 +26,8 @@ class PedidoAdmin(admin.ModelAdmin):
         "id",
         "created_at",
         "updated_at",
-        "asaas_charge_id",
-        "asaas_invoice_url",
+        "provider_payment_id",
+        "provider_checkout_url",
     )
     ordering = ("-created_at",)
     date_hierarchy = "created_at"
@@ -63,9 +63,9 @@ class PedidoAdmin(admin.ModelAdmin):
             },
         ),
         (
-            "Integração Asaas",
+            "Integração Pagamento",
             {
-                "fields": ("asaas_charge_id", "asaas_invoice_url"),
+                "fields": ("provider_payment_id", "provider_checkout_url"),
                 "classes": ("collapse",),
             },
         ),

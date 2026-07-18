@@ -115,8 +115,8 @@ class TestPedidoFreemiumHappy:
         assert pedido.canal_entrega == CanalEntrega.EMAIL
         # User ainda não existe
         assert pedido.user is None
-        # Asaas não tocado
-        assert pedido.asaas_charge_id == ""
+        # Gateway de pagamento não tocado (freemium é gratuito)
+        assert pedido.provider_payment_id is None
 
         # Task de e-mail foi enfileirada
         mock_email_task.assert_called_once()

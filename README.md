@@ -278,9 +278,12 @@ DJANGO_CORS_ALLOWED_ORIGINS=https://clama.vercel.app,https://clama.com.br
 SENTRY_DSN=<do dashboard>
 SENTRY_ENVIRONMENT=production
 ANTHROPIC_API_KEY=<quando disponível>
-ASAAS_API_KEY=<quando disponível>
+MERCADOPAGO_ACCESS_TOKEN=<access token do Mercado Pago (Checkout Pro)>
+MERCADOPAGO_WEBHOOK_SECRET=<secret de assinatura do webhook Mercado Pago>
 RESEND_API_KEY=<quando disponível>
 ```
+
+> `MERCADOPAGO_MIN_VALOR_CENTAVOS` é opcional (default `1`). Migração Asaas → Mercado Pago (Epic MP): adicionar `MERCADOPAGO_*` no Railway **antes** do deploy que passa a usar o gateway.
 
 ### Forçar Redeploy
 

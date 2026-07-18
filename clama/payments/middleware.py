@@ -1,34 +1,50 @@
 """
-Middleware de autenticação para webhooks do Asaas.
+Middleware de autenticação para webhooks do Mercado Pago.
 """
 
-import hmac
 import logging
 
-from django.conf import settings
 from django.http import JsonResponse
+
+from clama.payments.services.mercadopago_client import verificar_assinatura_webhook
 
 logger = logging.getLogger("clama.payments.webhook_auth")
 
 
-class AsaasWebhookAuthMiddleware:
+def _get_client_ip(request) -> str:
+    """Obtém IP do cliente, considerando proxies."""
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if x_forwarded_for:
+        return x_forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "unknown")
+
+
+def _unauthorized_response() -> JsonResponse:
+    """Retorna resposta 401 no formato pastoral."""
+    return JsonResponse(
+        {
+            "error": {
+                "code": "unauthorized",
+                "message": "Authentication required",
+                "pastoral_message": "Não pudemos confirmar quem enviou essa requisição.",
+            }
+        },
+        status=401,
+    )
+
+
+class MercadoPagoWebhookAuthMiddleware:
     """
-    Autentica webhooks inbound do Asaas via token estático no header
-    `asaas-access-token`, comparado em tempo constante ao
-    `settings.ASAAS_WEBHOOK_SECRET`.
+    Autentica webhooks inbound do Mercado Pago validando o HMAC-SHA256 do header
+    `x-signature` (AD-3), antes de a requisição tocar a view. Assinatura inválida,
+    header ausente ou secret não configurado → 401 pastoral.
 
-    NOTA: Asaas atualmente usa token estático em vez de HMAC assinado.
-    Quando/se Asaas migrar para HMAC, substituir a comparação por:
-
-        import hashlib
-        computed = hmac.new(secret.encode(), request.body, hashlib.sha256).hexdigest()
-        valid = hmac.compare_digest(computed, header_signature)
-
-    O middleware precisa então ler `request.body` ANTES de a view consumir
-    o stream — usar `request._body` cache ou `request.body` direto.
+    A lógica canônica de HMAC vive em `mercadopago_client.verificar_assinatura_webhook`
+    (mesma usada pelo adapter) — o middleware apenas a chama e traduz o resultado.
+    Não lê `request.body` (sem conflito de stream com o parser do DRF).
     """
 
-    PROTECTED_PATH = "/api/webhooks/asaas/"
+    PROTECTED_PATH = "/api/webhooks/mercadopago/"
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -38,64 +54,15 @@ class AsaasWebhookAuthMiddleware:
         if request.path != self.PROTECTED_PATH:
             return self.get_response(request)
 
-        # Validação do token
-        secret = getattr(settings, "ASAAS_WEBHOOK_SECRET", None)
-        if not secret:
-            logger.error(
-                "ASAAS_WEBHOOK_SECRET not configured",
-                extra={
-                    "event": "asaas_webhook_auth",
-                    "ok": False,
-                    "reason": "secret_not_configured",
-                },
-            )
-            return self._unauthorized_response()
-
-        # Ler token do header
-        header_token = request.headers.get("asaas-access-token", "")
-
-        # Comparação em tempo constante para evitar timing attacks
-        if not header_token or not hmac.compare_digest(secret, header_token):
-            remote_ip = self._get_client_ip(request)
+        if not verificar_assinatura_webhook(request):
             logger.warning(
-                "Asaas webhook auth failed",
+                "Mercado Pago webhook auth failed",
                 extra={
-                    "event": "asaas_webhook_auth",
+                    "event": "mercadopago_webhook_auth",
                     "ok": False,
-                    "ip": remote_ip,
+                    "ip": _get_client_ip(request),
                 },
             )
-            return self._unauthorized_response()
-
-        # Token válido
-        remote_ip = self._get_client_ip(request)
-        logger.info(
-            "Asaas webhook auth success",
-            extra={
-                "event": "asaas_webhook_auth",
-                "ok": True,
-                "ip": remote_ip,
-            },
-        )
+            return _unauthorized_response()
 
         return self.get_response(request)
-
-    def _get_client_ip(self, request) -> str:
-        """Obtém IP do cliente, considerando proxies."""
-        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-        if x_forwarded_for:
-            return x_forwarded_for.split(",")[0].strip()
-        return request.META.get("REMOTE_ADDR", "unknown")
-
-    def _unauthorized_response(self) -> JsonResponse:
-        """Retorna resposta 401 no formato pastoral."""
-        return JsonResponse(
-            {
-                "error": {
-                    "code": "unauthorized",
-                    "message": "Authentication required",
-                    "pastoral_message": "Não pudemos confirmar quem enviou essa requisição.",
-                }
-            },
-            status=401,
-        )

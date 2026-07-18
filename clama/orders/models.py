@@ -40,7 +40,7 @@ class PedidoStatus(models.TextChoices):
     AGUARDANDO_PAGAMENTO = "aguardando_pagamento", "Aguardando pagamento"
     # Pós-renegociação 2026-05-08: pedidos do fluxo freemium ficam neste
     # status entre a submissão do form e o clique no link de confirmação
-    # por e-mail (double opt-in). Não passa pelo Asaas.
+    # por e-mail (double opt-in). Não passa pelo gateway de pagamento.
     AGUARDANDO_CONFIRMACAO_EMAIL = (
         "aguardando_confirmacao_email",
         "Aguardando confirmação por e-mail",
@@ -123,7 +123,7 @@ class Pedido(UUIDPKModel, TimestampedModel):
         verbose_name="Usuário",
     )
 
-    # Marca pedidos do fluxo freemium (gratuitos, não passam pelo Asaas).
+    # Marca pedidos do fluxo freemium (gratuitos, não passam pelo gateway de pagamento).
     eh_gratuito = models.BooleanField(
         default=False,
         verbose_name="É gratuito",
@@ -144,17 +144,17 @@ class Pedido(UUIDPKModel, TimestampedModel):
         verbose_name="Status",
     )
 
-    # Integração Asaas
-    asaas_charge_id = models.CharField(
-        max_length=80,
+    # Integração com gateway de pagamento (agnóstico de provider — Mercado Pago)
+    provider_payment_id = models.CharField(
+        max_length=120,
+        null=True,
         blank=True,
-        default="",
-        verbose_name="ID da cobrança Asaas",
+        verbose_name="ID do pagamento no gateway",
     )
-    asaas_invoice_url = models.URLField(
+    provider_checkout_url = models.URLField(
+        null=True,
         blank=True,
-        default="",
-        verbose_name="URL do checkout Asaas",
+        verbose_name="URL de checkout do gateway",
     )
 
     # Integração WhatsApp (Z-API)

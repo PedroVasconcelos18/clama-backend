@@ -242,7 +242,7 @@ class AdminPedidoMarcarGratuitoView(AdminAPIView):
     Marca um pedido como gratuito (fluxo admin).
 
     Dispensa o pagamento, zera o valor e dispara a geração da oração
-    sem passar pelo gateway Asaas. Bloqueado apenas para pedidos já
+    sem passar pelo gateway de pagamento. Bloqueado apenas para pedidos já
     enviados (status ENVIADA).
     """
 

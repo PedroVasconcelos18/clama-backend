@@ -58,14 +58,13 @@ INSTALLED_APPS = ["whitenoise.runserver_nostatic", *INSTALLED_APPS]  # noqa: F40
 MIDDLEWARE = [  # noqa: F405
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    "clama.payments.middleware.AsaasWebhookAuthMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     *MIDDLEWARE[2:],  # Skip CorsMiddleware and SecurityMiddleware (already added above)
 ]
 
-# ASAAS WEBHOOK
+# MERCADO PAGO WEBHOOK
 # ------------------------------------------------------------------------------
-ASAAS_WEBHOOK_SECRET = env("ASAAS_WEBHOOK_SECRET")
+MERCADOPAGO_WEBHOOK_SECRET = env("MERCADOPAGO_WEBHOOK_SECRET")
 
 # STORAGES
 # ------------------------------------------------------------------------------

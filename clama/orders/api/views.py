@@ -107,7 +107,7 @@ class PedidoGratuitoCreateView(CreateAPIView):
     Cria um pedido de oração GRATUITO (usuário autenticado, card "Gratuito"
     em Minha Conta).
 
-    Não passa pelo Asaas: o pedido nasce `eh_gratuito=True` em
+    Não passa pelo gateway de pagamento: o pedido nasce `eh_gratuito=True` em
     `GERANDO_ORACAO` e a geração da oração é disparada na hora. Sem trava
     freemium (grátis ilimitado nesta tela autenticada, por decisão de
     produto).

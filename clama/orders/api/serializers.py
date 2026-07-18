@@ -71,9 +71,9 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
                 },
             },
             "valor_centavos": {
-                "min_value": 599,
+                "min_value": 100,
                 "error_messages": {
-                    "min_value": "O valor mínimo é R$ 5,99 — qualquer oferta acima ajuda o Clama.",
+                    "min_value": "O valor mínimo é R$ 1,00 — qualquer oferta acima ajuda o Clama.",
                 },
             },
             "canal_entrega": {
@@ -149,9 +149,14 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
                 {"telefone": "Para receber no WhatsApp, precisamos do seu telefone."}
             )
 
-        # Valor Livre: deriva plano a partir do valor ("par abaixo").
+        # Valor Livre: deriva plano a partir do valor ("par abaixo"). Sem
+        # nenhum tier visível ativo (ex.: só o gratuito ligado), cai no
+        # plano interno "Livre" (complexidade simples) para não travar a
+        # geração. Só erra se nem o fallback existir (misconfig).
         if data.get("plano") is None:
             inferido = Plan.objects.infer_from_valor(data["valor_centavos"])
+            if inferido is None:
+                inferido = Plan.objects.fallback_valor_livre()
             if inferido is None:
                 raise serializers.ValidationError(
                     {"plano": "Nenhum plano disponível no momento."}
@@ -198,7 +203,7 @@ class PedidoGratuitoCreateSerializer(serializers.ModelSerializer):
     Diferenças em relação ao fluxo pago:
     - Não recebe `plano` nem `valor_centavos`: o plano gratuito (invisível,
       complexidade SIMPLES_GRATUITA) é forçado no `create`, valor zerado.
-    - Não passa pelo Asaas: o pedido já nasce `eh_gratuito=True` e em
+    - Não passa pelo gateway de pagamento: o pedido já nasce `eh_gratuito=True` e em
       `GERANDO_ORACAO`. A view dispara a geração da oração.
     - Sem trava freemium (1-por-usuário): nesta tela autenticada, grátis é
       ilimitado por decisão de produto.

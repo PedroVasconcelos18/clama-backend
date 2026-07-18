@@ -141,8 +141,8 @@ class TestCustomerPedidosList:
 
         # Campos perigosos NÃO devem aparecer
         for k in [
-            "cpf_cnpj", "telefone", "consent_ip", "asaas_charge_id",
-            "asaas_invoice_url", "device_hash",
+            "cpf_cnpj", "telefone", "consent_ip", "provider_payment_id",
+            "provider_checkout_url", "device_hash",
         ]:
             assert k not in item, f"campo sensível {k} vazado"
 

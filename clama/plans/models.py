@@ -46,6 +46,30 @@ class PlanManager(models.Manager):
             self.filter(ativo=True, visivel=True).order_by("valor_centavos").first()
         )
 
+    def fallback_valor_livre(self) -> "Plan | None":
+        """
+        Retorna o plano interno do fluxo de valor livre: complexidade
+        `simples` (o "prompt de estrutura simples"), invisível e ativo —
+        semeado pela migration `plans/0008`.
+
+        Usado como fallback quando `infer_from_valor` não encontra nenhum
+        tier visível (ex.: todos os tiers pagos desativados, restando só o
+        fluxo de valor livre + o gratuito). Espelha o plano invisível
+        "Gratuito" do freemium: nunca aparece como card na LP/formulário,
+        só é atribuído server-side.
+
+        O filtro `visivel=False` o diferencia do tier "simples" visível
+        (quando este existir), garantindo unicidade do lookup.
+
+        Returns:
+            Plan de fallback ou None se a row sumir do banco (misconfig).
+        """
+        return self.filter(
+            complexidade=Complexidade.SIMPLES,
+            visivel=False,
+            ativo=True,
+        ).first()
+
 
 class Plan(UUIDPKModel, TimestampedModel):
     """

@@ -5,19 +5,20 @@ Exceções do app payments.
 from clama.core.exceptions import ClamaBaseException
 
 
-class AsaasIntegrationError(ClamaBaseException):
+class PaymentProviderError(ClamaBaseException):
     """
-    Erro de integração com a API do Asaas.
+    Erro de integração com o gateway de pagamento (agnóstico de provider).
 
-    Levantado quando uma operação na API do Asaas falha após
-    esgotar todas as tentativas de retry.
+    Levantado quando uma operação no gateway falha após esgotar os retries.
+    Superfície agnóstica de provider para que views/tasks não
+    precisem saber qual gateway está em uso.
 
     Attributes:
-        upstream_status: HTTP status devolvido pela Asaas (None se rede/timeout).
-        upstream_body: Corpo da resposta da Asaas (dict ou str truncada).
+        upstream_status: HTTP status devolvido pelo gateway (None se rede/timeout).
+        upstream_body: Corpo da resposta do gateway (dict ou str truncada).
     """
 
-    code = "asaas_integration_error"
+    code = "payment_provider_error"
     message = "Erro de integração com o serviço de pagamento"
     pastoral_message = "Tivemos um soluço com o pagamento. Pode tentar novamente em instantes."
 
@@ -28,7 +29,8 @@ class AsaasIntegrationError(ClamaBaseException):
         pastoral_message=None,
         upstream_status: int | None = None,
         upstream_body=None,
+        extra=None,
     ):
-        super().__init__(message, code, pastoral_message)
+        super().__init__(message, code, pastoral_message, extra)
         self.upstream_status = upstream_status
         self.upstream_body = upstream_body

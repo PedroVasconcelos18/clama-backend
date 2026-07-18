@@ -98,8 +98,8 @@ class AdminPedidoDetailSerializer(serializers.ModelSerializer):
             "status",
             "canal_entrega",
             # Integrações
-            "asaas_charge_id",
-            "asaas_invoice_url",
+            "provider_payment_id",
+            "provider_checkout_url",
             "whatsapp_message_id",
             "whatsapp_delivered_at",
             "whatsapp_read_at",

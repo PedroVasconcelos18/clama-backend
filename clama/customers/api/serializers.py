@@ -201,7 +201,7 @@ class CustomerPedidoListSerializer(serializers.ModelSerializer):
     Pedido do user no histórico da página `/conta`.
 
     Subset cuidadoso: NÃO retornamos cpf_cnpj, telefone, consent_ip,
-    asaas_charge_id, device_hash. A `oracao_gerada` só vai quando o pedido
+    provider_payment_id, device_hash. A `oracao_gerada` só vai quando o pedido
     está em `ENVIADA` — alinhado com a regra do `PedidoStatusSerializer`.
     """
 

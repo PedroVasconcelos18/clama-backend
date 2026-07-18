@@ -12,6 +12,7 @@ class WebhookProvider(models.TextChoices):
 
     ASAAS = "ASAAS", "Asaas"
     ZAPI = "ZAPI", "Z-API"
+    MERCADO_PAGO = "MERCADO_PAGO", "Mercado Pago"
 
 
 class WebhookEventoStatus(models.TextChoices):
@@ -41,7 +42,7 @@ class WebhookEventoManager(models.Manager):
         retorna (existing, False) sem lançar exceção.
 
         Args:
-            provider: Provedor do webhook (ASAAS, ZAPI)
+            provider: Provedor do webhook (ASAAS, ZAPI, MERCADO_PAGO)
             external_event_id: ID único do evento no provedor
             event_type: Tipo do evento
             payload: Payload completo do webhook

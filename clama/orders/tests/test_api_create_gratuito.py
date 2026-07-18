@@ -2,7 +2,7 @@
 Testes para o endpoint POST /api/pedidos/gratuito/.
 
 Fluxo gratuito autenticado (card "Gratuito" em Minha Conta): cria o pedido
-já como `eh_gratuito=True`, em `GERANDO_ORACAO`, sem Asaas, e dispara a
+já como `eh_gratuito=True`, em `GERANDO_ORACAO`, sem gateway de pagamento, e dispara a
 geração da oração via `transaction.on_commit`. Sem trava freemium.
 """
 from unittest.mock import patch

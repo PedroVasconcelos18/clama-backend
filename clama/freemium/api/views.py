@@ -382,8 +382,6 @@ class PedidoFreemiumCreateView(APIView):
                 eh_gratuito=True,
                 canal_entrega=CanalEntrega.EMAIL,
                 status=PedidoStatus.AGUARDANDO_CONFIRMACAO_EMAIL,
-                asaas_charge_id="",
-                asaas_invoice_url="",
                 consent_aceito=True,
                 consent_versao=POLITICA_VERSAO_ATUAL,
                 consent_aceito_at=timezone.now(),

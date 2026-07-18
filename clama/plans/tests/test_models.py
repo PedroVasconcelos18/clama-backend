@@ -143,3 +143,46 @@ class TestPlanManagerInferFromValor:
         """Sem planos ativos retorna None."""
         Plan.objects.all().delete()
         assert Plan.objects.infer_from_valor(5000) is None
+
+
+@pytest.mark.django_db
+class TestPlanManagerFallbackValorLivre:
+    """Testes para PlanManager.fallback_valor_livre (plano interno "Livre")."""
+
+    def test_retorna_plano_simples_invisivel_ativo(self):
+        """Retorna o plano simples, invisível e ativo (o fallback do valor livre)."""
+        Plan.objects.all().delete()
+        livre = PlanFactory(
+            nome="Livre",
+            complexidade=Complexidade.SIMPLES,
+            ativo=True,
+            visivel=False,
+        )
+        assert Plan.objects.fallback_valor_livre() == livre
+
+    def test_ignora_tier_simples_visivel(self):
+        """O tier "simples" visível NÃO é o fallback (só o invisível)."""
+        Plan.objects.all().delete()
+        PlanFactory(
+            nome="Pedido de Oração",
+            complexidade=Complexidade.SIMPLES,
+            ativo=True,
+            visivel=True,
+        )
+        assert Plan.objects.fallback_valor_livre() is None
+
+    def test_ignora_fallback_inativo(self):
+        """Fallback inativo não é retornado."""
+        Plan.objects.all().delete()
+        PlanFactory(
+            nome="Livre",
+            complexidade=Complexidade.SIMPLES,
+            ativo=False,
+            visivel=False,
+        )
+        assert Plan.objects.fallback_valor_livre() is None
+
+    def test_sem_fallback_retorna_none(self):
+        """Sem nenhum plano retorna None."""
+        Plan.objects.all().delete()
+        assert Plan.objects.fallback_valor_livre() is None

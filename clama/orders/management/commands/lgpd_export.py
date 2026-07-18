@@ -83,8 +83,8 @@ class Command(BaseCommand):
                 # Status e canal
                 "status": pedido.status,
                 "canal_entrega": pedido.canal_entrega,
-                # Integração Asaas
-                "asaas_charge_id": pedido.asaas_charge_id or None,
+                # Integração com o gateway de pagamento
+                "provider_payment_id": pedido.provider_payment_id or None,
                 # Consentimento
                 "consent": {
                     "aceito": pedido.consent_aceito,

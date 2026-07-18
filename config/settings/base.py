@@ -143,6 +143,9 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
+    # Autentica o HMAC do webhook Mercado Pago antes de tocar a view (AD-3).
+    # Em base.py (não só production) para staging/test também validarem.
+    "clama.payments.middleware.MercadoPagoWebhookAuthMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -436,19 +439,15 @@ FIELD_ENCRYPTION_KEY = env(
     default="",  # OBRIGATÓRIO em produção
 )
 
-# Asaas Payment Gateway
+# Mercado Pago Payment Gateway
 # -------------------------------------------------------------------------------
-# https://docs.asaas.com/reference
-# Note: Using os.environ.get directly because django-environ interprets $ as variable reference
-ASAAS_API_KEY = os.environ.get("ASAAS_API_KEY", "")
-ASAAS_BASE_URL = env(
-    "ASAAS_BASE_URL",
-    default="https://sandbox.asaas.com/api/v3",
-)
-# Valor mínimo da cobrança em centavos. A Asaas rejeita cobranças abaixo de
-# R$5,00 (500 centavos) com "O valor da cobrança não pode ser menor que R$ 5,00"
-# — limite global aplicado a qualquer billingType (PIX, boleto, cartão).
-ASAAS_MIN_VALOR_CENTAVOS = env.int("ASAAS_MIN_VALOR_CENTAVOS", default=500)
+# https://www.mercadopago.com.br/developers
+# Note: os.environ.get for the token because django-environ interprets $ as a variable reference
+MERCADOPAGO_ACCESS_TOKEN = os.environ.get("MERCADOPAGO_ACCESS_TOKEN", "")
+MERCADOPAGO_WEBHOOK_SECRET = env("MERCADOPAGO_WEBHOOK_SECRET", default="")
+# PIX aceita valores baixos (centavos), então o mínimo é 1 centavo — diferente do
+# mínimo de R$5,00 do gateway anterior. Usado pelo CheckoutView (MP.4).
+MERCADOPAGO_MIN_VALOR_CENTAVOS = env.int("MERCADOPAGO_MIN_VALOR_CENTAVOS", default=1)
 
 # Frontend URL (for redirect callbacks)
 # -------------------------------------------------------------------------------

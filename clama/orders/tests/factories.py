@@ -24,5 +24,3 @@ class PedidoFactory(DjangoModelFactory):
     valor_centavos = factory.LazyAttribute(lambda o: o.plano.valor_centavos)
     canal_entrega = CanalEntrega.EMAIL
     status = PedidoStatus.AGUARDANDO_PAGAMENTO
-    asaas_charge_id = ""
-    asaas_invoice_url = ""
