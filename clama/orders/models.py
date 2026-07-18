@@ -156,6 +156,19 @@ class Pedido(UUIDPKModel, TimestampedModel):
         blank=True,
         verbose_name="URL de checkout do gateway",
     )
+    # Pix (Checkout Transparente): código copia-e-cola e imagem do QR (PNG
+    # base64), gerados na criação do pagamento. Exibidos no app pra pessoa
+    # pagar sem sair do site.
+    pix_qr_code = models.TextField(
+        null=True,
+        blank=True,
+        verbose_name="Pix copia-e-cola",
+    )
+    pix_qr_code_base64 = models.TextField(
+        null=True,
+        blank=True,
+        verbose_name="Pix QR code (PNG base64)",
+    )
 
     # Integração WhatsApp (Z-API)
     whatsapp_message_id = models.CharField(

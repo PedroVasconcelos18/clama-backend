@@ -344,6 +344,8 @@ class PedidoStatusSerializer(serializers.ModelSerializer):
             "created_at",
             "pastoral_message",
             "oracao_gerada",
+            "pix_qr_code",
+            "pix_qr_code_base64",
         ]
 
     def get_pastoral_message(self, obj: Pedido) -> str | None:

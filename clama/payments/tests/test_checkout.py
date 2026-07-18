@@ -21,8 +21,10 @@ class FakeProvider:
 
     def __init__(self, result=None, error=None):
         self.result = result or CobrancaResult(
-            provider_payment_id="pref_12345",
-            checkout_url="https://mp/checkout/pref_12345",
+            provider_payment_id="mp_pay_12345",
+            checkout_url="https://mp/ticket/mp_pay_12345",
+            pix_qr_code="00020126br.gov.bcb.pix6304ABCD",
+            pix_qr_code_base64="iVBORw0KGgoAAAANSUhEUg==",
         )
         self.error = error
         self.criar_cobranca_calls = []
@@ -93,7 +95,8 @@ class TestCheckoutHappyPath:
         response = api_client.post(url)
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.data["checkout_url"] == "https://mp/checkout/pref_12345"
+        assert response.data["pix_qr_code"] == "00020126br.gov.bcb.pix6304ABCD"
+        assert response.data["pix_qr_code_base64"] == "iVBORw0KGgoAAAANSUhEUg=="
         assert response.data["pedido_id"] == str(pedido_aguardando.id)
 
     def test_checkout_chama_criar_cobranca_com_dados_do_pedido(self, api_client, pedido_aguardando, fake_provider):
@@ -112,8 +115,9 @@ class TestCheckoutHappyPath:
         api_client.post(url)
 
         pedido_aguardando.refresh_from_db()
-        assert pedido_aguardando.provider_payment_id == "pref_12345"
-        assert pedido_aguardando.provider_checkout_url == "https://mp/checkout/pref_12345"
+        assert pedido_aguardando.provider_payment_id == "mp_pay_12345"
+        assert pedido_aguardando.pix_qr_code == "00020126br.gov.bcb.pix6304ABCD"
+        assert pedido_aguardando.pix_qr_code_base64 == "iVBORw0KGgoAAAANSUhEUg=="
 
     def test_descricao_sem_pii(self, api_client, pedido_aguardando, fake_provider):
         url = reverse("pedido-checkout", kwargs={"id": pedido_aguardando.id})
@@ -237,14 +241,15 @@ class TestCheckoutIdempotency:
     def test_reusa_cobranca_existente_sem_chamar_provider(self, api_client, fake_provider):
         pedido = PedidoFactory(
             status=PedidoStatus.AGUARDANDO_PAGAMENTO,
-            provider_payment_id="pref_existing",
-            provider_checkout_url="https://mp/checkout/pref_existing",
+            provider_payment_id="mp_pay_existing",
+            pix_qr_code="00020126existing6304FFFF",
+            pix_qr_code_base64="ZXhpc3Rpbmc=",
         )
         url = reverse("pedido-checkout", kwargs={"id": pedido.id})
         response = api_client.post(url)
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.data["checkout_url"] == "https://mp/checkout/pref_existing"
+        assert response.data["pix_qr_code"] == "00020126existing6304FFFF"
         assert fake_provider.criar_cobranca_calls == []
 
     def test_estado_parcial_nao_dispara_reuso(self, api_client, fake_provider):

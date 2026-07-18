@@ -69,18 +69,25 @@ def _no_sleep(monkeypatch):
 # ---------- criar_cobranca ----------
 
 
-@override_settings(
-    BACKEND_PUBLIC_URL="https://api.clama.com.br",
-    FRONTEND_URL="https://clama.com.br",
-)
-def test_criar_cobranca_cria_preference_pix_priority_e_retorna_init_point():
-    pref = FakeEndpoint(
+@override_settings(BACKEND_PUBLIC_URL="https://api.clama.com.br")
+def test_criar_cobranca_cria_pagamento_pix_e_retorna_qr():
+    pay = FakeEndpoint(
         {
-            "status": 201,
-            "response": {"id": "pref_123", "init_point": "https://mp/checkout/pref_123"},
+            "status": 200,
+            "response": {
+                "id": 987654321,
+                "status": "pending",
+                "point_of_interaction": {
+                    "transaction_data": {
+                        "qr_code": "00020126br.gov.bcb.pix6304ABCD",
+                        "qr_code_base64": "iVBORw0KGgoAAAANSUhEUg==",
+                        "ticket_url": "https://mp/ticket/987654321",
+                    }
+                },
+            },
         }
     )
-    client = MercadoPagoClient(sdk=FakeSDK(preference=pref))
+    client = MercadoPagoClient(sdk=FakeSDK(payment=pay))
 
     result = client.criar_cobranca(
         nome="Juliana",
@@ -92,23 +99,23 @@ def test_criar_cobranca_cria_preference_pix_priority_e_retorna_init_point():
     )
 
     assert isinstance(result, CobrancaResult)
-    assert result.provider_payment_id == "pref_123"
-    assert result.checkout_url == "https://mp/checkout/pref_123"
+    assert result.provider_payment_id == "987654321"
+    assert result.pix_qr_code == "00020126br.gov.bcb.pix6304ABCD"
+    assert result.pix_qr_code_base64 == "iVBORw0KGgoAAAANSUhEUg=="
+    assert result.checkout_url == "https://mp/ticket/987654321"
 
-    data = pref.last_data
+    data = pay.last_data
     assert data["external_reference"] == "abc-123"
-    assert data["items"][0]["unit_price"] == 50.0
-    assert data["items"][0]["currency_id"] == "BRL"
-    excluded = {p["id"] for p in data["payment_methods"]["excluded_payment_types"]}
-    assert excluded == {"credit_card", "debit_card", "ticket"}
+    assert data["payment_method_id"] == "pix"
+    assert data["transaction_amount"] == 50.0
     assert data["notification_url"] == "https://api.clama.com.br/api/webhooks/mercadopago/"
-    assert data["back_urls"]["success"] == "https://clama.com.br/confirmacao?pedido_id=abc-123"
-    assert data["auto_return"] == "approved"
+    assert data["payer"]["email"] == "juliana@example.com"
+    assert data["payer"]["identification"] == {"type": "CPF", "number": "12345678909"}
 
 
 def test_criar_cobranca_4xx_vira_payment_provider_error_sem_retry():
-    pref = FakeEndpoint({"status": 422, "response": {"message": "invalid params"}})
-    client = MercadoPagoClient(sdk=FakeSDK(preference=pref))
+    pay = FakeEndpoint({"status": 422, "response": {"message": "invalid params"}})
+    client = MercadoPagoClient(sdk=FakeSDK(payment=pay))
 
     with pytest.raises(PaymentProviderError) as exc:
         client.criar_cobranca(
@@ -122,12 +129,12 @@ def test_criar_cobranca_4xx_vira_payment_provider_error_sem_retry():
 
     assert exc.value.upstream_status == 422
     assert exc.value.upstream_body == {"message": "invalid params"}
-    assert pref.calls == 1  # 4xx não retenta
+    assert pay.calls == 1  # 4xx não retenta
 
 
 def test_criar_cobranca_5xx_retenta_3x_e_vira_payment_provider_error():
-    pref = FakeEndpoint({"status": 503, "response": {"message": "service unavailable"}})
-    client = MercadoPagoClient(sdk=FakeSDK(preference=pref))
+    pay = FakeEndpoint({"status": 503, "response": {"message": "service unavailable"}})
+    client = MercadoPagoClient(sdk=FakeSDK(payment=pay))
 
     with pytest.raises(PaymentProviderError) as exc:
         client.criar_cobranca(
@@ -140,7 +147,7 @@ def test_criar_cobranca_5xx_retenta_3x_e_vira_payment_provider_error():
         )
 
     assert exc.value.upstream_status == 503
-    assert pref.calls == 3  # esgota as 3 tentativas
+    assert pay.calls == 3  # esgota as 3 tentativas
 
 
 # ---------- buscar_pagamento ----------
@@ -261,8 +268,8 @@ def test_adapter_e_instancia_do_port():
 
 def test_criar_cobranca_erro_de_rede_vira_payment_provider_error():
     # Erro de rede é retentado 3x pelo @with_retry e convertido em PaymentProviderError (AD-6).
-    pref = FakeEndpoint(raises=requests.ConnectionError("boom"))
-    client = MercadoPagoClient(sdk=FakeSDK(preference=pref))
+    pay = FakeEndpoint(raises=requests.ConnectionError("boom"))
+    client = MercadoPagoClient(sdk=FakeSDK(payment=pay))
 
     with pytest.raises(PaymentProviderError) as exc:
         client.criar_cobranca(
@@ -275,12 +282,13 @@ def test_criar_cobranca_erro_de_rede_vira_payment_provider_error():
         )
 
     assert exc.value.upstream_status is None
-    assert pref.calls == 3
+    assert pay.calls == 3
 
 
-def test_criar_cobranca_2xx_sem_id_vira_payment_provider_error():
-    pref = FakeEndpoint({"status": 201, "response": {"init_point": "https://mp/x"}})
-    client = MercadoPagoClient(sdk=FakeSDK(preference=pref))
+def test_criar_cobranca_2xx_sem_qr_vira_payment_provider_error():
+    # 2xx sem point_of_interaction/qr_code → erro (não dá pra exibir o Pix).
+    pay = FakeEndpoint({"status": 200, "response": {"id": 123, "status": "pending"}})
+    client = MercadoPagoClient(sdk=FakeSDK(payment=pay))
 
     with pytest.raises(PaymentProviderError):
         client.criar_cobranca(

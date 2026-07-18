@@ -20,10 +20,18 @@ class StatusPagamento(StrEnum):
 
 @dataclass(frozen=True)
 class CobrancaResult:
-    """Resultado da criação de cobrança: id do provider + URL de checkout."""
+    """
+    Resultado da criação de cobrança: id do provider + dados de pagamento.
+
+    Para Pix (Checkout Transparente), `pix_qr_code` traz o código copia-e-cola
+    e `pix_qr_code_base64` a imagem do QR (PNG base64). `checkout_url` guarda a
+    `ticket_url` do Mercado Pago (fallback/visualização), podendo ser vazia.
+    """
 
     provider_payment_id: str
     checkout_url: str
+    pix_qr_code: str | None = None
+    pix_qr_code_base64: str | None = None
 
 
 @dataclass(frozen=True)

@@ -131,49 +131,64 @@ class MercadoPagoClient(PaymentProvider):
         descricao: str,
         pedido_id: str,
     ) -> CobrancaResult:
-        """Cria uma Preference (Checkout Pro, PIX-priority) e devolve o id + init_point."""
+        """
+        Cria um pagamento **Pix** (Checkout Transparente) e devolve o id do
+        pagamento + o QR (código copia-e-cola e imagem PNG base64).
+
+        Pix only: em vez do Checkout Pro (redirect), gera o Pix direto pela
+        API de Pagamentos, exibido no app pra pessoa pagar sem sair do site.
+        A idempotência de duplicidade é garantida a montante (CheckoutView
+        reusa o pagamento já criado sob lock).
+        """
         backend_url = getattr(settings, "BACKEND_PUBLIC_URL", "").rstrip("/")
-        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
 
-        payer = {"name": nome, "email": email}
+        payer: dict = {"email": email}
+        nome_limpo = (nome or "").strip()
+        if nome_limpo:
+            payer["first_name"] = nome_limpo
         if cpf_cnpj:
-            payer["identification"] = {"type": "CPF", "number": cpf_cnpj}
+            tipo = "CNPJ" if len(cpf_cnpj) == 14 else "CPF"
+            payer["identification"] = {"type": tipo, "number": cpf_cnpj}
 
-        preference_data = {
-            "items": [
-                {
-                    "title": descricao,
-                    "quantity": 1,
-                    "unit_price": round(valor_centavos / 100, 2),
-                    "currency_id": "BRL",
-                }
-            ],
-            "payer": payer,
+        payment_data = {
+            "transaction_amount": round(valor_centavos / 100, 2),
+            "description": descricao,
+            "payment_method_id": "pix",
             "external_reference": str(pedido_id),
-            "notification_url": f"{backend_url}/api/webhooks/mercadopago/",
-            "back_urls": {"success": f"{frontend_url}/confirmacao?pedido_id={pedido_id}"},
-            "auto_return": "approved",
-            "payment_methods": {
-                "excluded_payment_types": [
-                    {"id": "credit_card"},
-                    {"id": "debit_card"},
-                    {"id": "ticket"},
-                ]
-            },
+            "payer": payer,
         }
+        # O Mercado Pago exige uma URL pública HTTPS no notification_url e
+        # rejeita http/localhost (400). Em local (http://localhost) omitimos —
+        # sem webhook, o status é acompanhado pelo polling da confirmação. Em
+        # staging/prod (https://api.clama.me) o webhook é incluído.
+        if backend_url.startswith("https://"):
+            payment_data["notification_url"] = (
+                f"{backend_url}/api/webhooks/mercadopago/"
+            )
 
         response = self._execute(
-            "preference_create", lambda: self._sdk.preference().create(preference_data)
+            "payment_create", lambda: self._sdk.payment().create(payment_data)
         )
-        if "id" not in response or "init_point" not in response:
+
+        transaction_data = (response.get("point_of_interaction") or {}).get(
+            "transaction_data"
+        ) or {}
+        qr_code = transaction_data.get("qr_code")
+        qr_code_base64 = transaction_data.get("qr_code_base64")
+        payment_id = response.get("id")
+
+        if not payment_id or not qr_code:
             raise PaymentProviderError(
-                message="Resposta do Mercado Pago sem id/init_point ao criar cobrança",
+                message="Resposta do Mercado Pago sem id/QR Pix ao criar cobrança",
                 upstream_status=None,
                 upstream_body=response,
             )
+
         return CobrancaResult(
-            provider_payment_id=response["id"],
-            checkout_url=response["init_point"],
+            provider_payment_id=str(payment_id),
+            checkout_url=transaction_data.get("ticket_url") or "",
+            pix_qr_code=qr_code,
+            pix_qr_code_base64=qr_code_base64,
         )
 
     def buscar_pagamento(self, payment_id: str) -> PagamentoResult:

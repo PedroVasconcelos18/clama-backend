@@ -92,10 +92,11 @@ def _pastoral_message_from_mp_error(upstream_body, fallback: str) -> tuple[str, 
 
 
 class CheckoutResponseSerializer(serializers.Serializer):
-    """Serializer para resposta do checkout."""
+    """Serializer para resposta do checkout Pix (QR copia-e-cola + imagem)."""
 
-    checkout_url = serializers.URLField()
     pedido_id = serializers.UUIDField()
+    pix_qr_code = serializers.CharField()
+    pix_qr_code_base64 = serializers.CharField(allow_null=True)
 
 
 class CheckoutView(APIView):
@@ -203,19 +204,20 @@ class CheckoutView(APIView):
         tags=["Pedidos"],
         summary="Criar checkout de pagamento",
         description="""
-Cria uma cobrança no Mercado Pago (Checkout Pro / PIX) e retorna a URL de checkout.
+Cria um pagamento **Pix** no Mercado Pago (Checkout Transparente) e retorna o
+QR: código copia-e-cola (`pix_qr_code`) + imagem PNG base64 (`pix_qr_code_base64`).
 
-**Idempotência:** Múltiplas chamadas em pedido AGUARDANDO_PAGAMENTO reutilizam a
-cobrança já criada.
+**Idempotência:** Múltiplas chamadas em pedido AGUARDANDO_PAGAMENTO reutilizam o
+Pix já gerado.
 
 **Status permitido:** Apenas AGUARDANDO_PAGAMENTO. Pedidos já pagos retornam 409.
 
-**Tipo de pagamento:** PIX (via `excluded_payment_types` na preference).
+**Tipo de pagamento:** Pix only (`payment_method_id="pix"`).
         """,
         responses={
             200: OpenApiResponse(
                 response=CheckoutResponseSerializer,
-                description="URL de checkout criada com sucesso",
+                description="Pix gerado com sucesso (QR copia-e-cola + imagem)",
             ),
             404: OpenApiResponse(description="Pedido não encontrado"),
             409: OpenApiResponse(description="Pedido já foi pago"),
@@ -244,8 +246,8 @@ cobrança já criada.
             self._validate_status_for_checkout(pedido)
             self._validate_pedido_data(pedido)
 
-            # Idempotência: cobrança já criada → reutiliza.
-            if pedido.provider_payment_id and pedido.provider_checkout_url:
+            # Idempotência: Pix já gerado → reutiliza o mesmo QR.
+            if pedido.provider_payment_id and pedido.pix_qr_code:
                 logger.info(
                     "Checkout reused",
                     extra={
@@ -256,8 +258,9 @@ cobrança já criada.
                 )
                 return Response(
                     {
-                        "checkout_url": pedido.provider_checkout_url,
                         "pedido_id": str(pedido.id),
+                        "pix_qr_code": pedido.pix_qr_code,
+                        "pix_qr_code_base64": pedido.pix_qr_code_base64,
                     },
                     status=status.HTTP_200_OK,
                 )
@@ -276,11 +279,17 @@ cobrança já criada.
                 )
 
                 pedido.provider_payment_id = cobranca.provider_payment_id
-                pedido.provider_checkout_url = cobranca.checkout_url
+                # Não guardamos a ticket_url (pode exceder o URLField); o Pix
+                # é exibido no app via QR. Idempotência usa pix_qr_code.
+                pedido.provider_checkout_url = None
+                pedido.pix_qr_code = cobranca.pix_qr_code
+                pedido.pix_qr_code_base64 = cobranca.pix_qr_code_base64
                 pedido.save(
                     update_fields=[
                         "provider_payment_id",
                         "provider_checkout_url",
+                        "pix_qr_code",
+                        "pix_qr_code_base64",
                         "updated_at",
                     ]
                 )
@@ -296,8 +305,9 @@ cobrança já criada.
 
                 return Response(
                     {
-                        "checkout_url": cobranca.checkout_url,
                         "pedido_id": str(pedido.id),
+                        "pix_qr_code": cobranca.pix_qr_code,
+                        "pix_qr_code_base64": cobranca.pix_qr_code_base64,
                     },
                     status=status.HTTP_200_OK,
                 )
