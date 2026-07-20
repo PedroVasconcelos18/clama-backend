@@ -165,6 +165,25 @@ class MercadoPagoClient(PaymentProvider):
             payment_data["notification_url"] = (
                 f"{backend_url}/api/webhooks/mercadopago/"
             )
+            logger.info(
+                "Pix criado COM notification_url",
+                extra={
+                    "event": "pix_notification_url_set",
+                    "notification_url": payment_data["notification_url"],
+                },
+            )
+        else:
+            # Sem notification_url o Mercado Pago não entrega webhook por
+            # pagamento — o pedido fica preso em AGUARDANDO_PAGAMENTO. Logamos
+            # em nível WARNING para não ficar invisível (BACKEND_PUBLIC_URL
+            # ausente/não-https em prod é misconfig crítico).
+            logger.warning(
+                "Pix criado SEM notification_url — BACKEND_PUBLIC_URL não-https; webhook não será entregue",
+                extra={
+                    "event": "pix_notification_url_missing",
+                    "backend_url": backend_url or "(vazio)",
+                },
+            )
 
         response = self._execute(
             "payment_create", lambda: self._sdk.payment().create(payment_data)
