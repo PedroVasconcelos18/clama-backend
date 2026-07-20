@@ -37,6 +37,9 @@ python-json-logger>=2.0.7
 # AI / LLM
 anthropic>=0.40.0
 
+# Payment Gateway — DEVE espelhar requirements/base.txt (ver aviso acima).
+mercadopago>=3.3.0,<4
+
 # Email
 django-anymail[resend]>=11.0
 
