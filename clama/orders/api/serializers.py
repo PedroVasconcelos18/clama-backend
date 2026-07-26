@@ -13,6 +13,7 @@ from clama.core.validators_documento import (
 from clama.core.validators_documento import (
     is_valid_cpf as _is_valid_cpf,
 )
+from clama.instituicoes.models import Instituicao
 from clama.orders.models import CanalEntrega, Pedido, PedidoStatus
 from clama.plans.models import Plan
 
@@ -24,6 +25,15 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
         queryset=Plan.objects.all(),
         required=False,
         allow_null=True,
+    )
+    instituicao = serializers.PrimaryKeyRelatedField(
+        queryset=Instituicao.objects.filter(ativo=True),
+        required=False,
+        allow_null=True,
+        error_messages={
+            "does_not_exist": "Não encontramos essa instituição. Escolha uma da lista, por favor.",
+            "incorrect_type": "Instituição inválida. Escolha uma da lista, por favor.",
+        },
     )
     valor_reais_str = serializers.CharField(read_only=True)
     consent_aceito = serializers.BooleanField(required=True, write_only=True)
@@ -40,6 +50,7 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
             "sexo",
             "pedido_oracao",
             "plano",
+            "instituicao",
             "valor_centavos",
             "canal_entrega",
             "consent_aceito",
@@ -99,9 +110,7 @@ class PedidoCreateSerializer(serializers.ModelSerializer):
                 "Esse plano não está disponível no momento."
             )
         if not value.visivel:
-            raise serializers.ValidationError(
-                "Esse plano não está disponível."
-            )
+            raise serializers.ValidationError("Esse plano não está disponível.")
         return value
 
     def validate_cpf_cnpj(self, value):
@@ -309,6 +318,99 @@ class PedidoGratuitoCreateSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class DoacaoAnonimaCreateSerializer(PedidoCreateSerializer):
+    """
+    Serializer para doação paga SEM conta (LP, doador anônimo).
+
+    Estende o fluxo pago (`PedidoCreateSerializer`), mas:
+    - `create()` NUNCA vincula `request.user`: o Pedido nasce com `user=None`
+      (a conta é provisionada/vinculada depois, no webhook de pagamento).
+    - Exige `turnstile_token` (anti-robô — validado na view, antes de
+      qualquer escrita) e aceita `device_hash` (instrumentação anti-abuso,
+      persistido em `Pedido.device_hash`).
+    - `valor_centavos` obrigatório (min R$ 1,00) e `instituicao` opcional
+      seguem o fluxo pago; `consent_aceito` obrigatório.
+
+    Reaproveita `validate_cpf_cnpj`, `validate_consent_aceito` e o `validate`
+    (derivação de plano a partir do valor) do fluxo pago por herança.
+    """
+
+    # Doador anônimo não escolhe plano: ele é derivado do valor no `validate`
+    # herdado. Remove o campo `plano` declarado no serializer pago (evita o
+    # assert do DRF "declarado mas ausente de fields" e fecha manipulação de
+    # pricing pela fronteira da API).
+    plano = None
+
+    # Write-only, NÃO é campo do model — a view lê de `validated_data` e
+    # valida via `TurnstileClient` antes de criar o Pedido; `create` descarta.
+    turnstile_token = serializers.CharField(
+        write_only=True,
+        min_length=1,
+        max_length=2048,
+        error_messages={
+            "blank": "Verificação anti-robô falhou. Atualize a página e tente de novo.",
+            "required": "Verificação anti-robô falhou. Atualize a página e tente de novo.",
+        },
+    )
+
+    class Meta(PedidoCreateSerializer.Meta):
+        fields = [
+            # Entrada
+            "nome",
+            "email",
+            "telefone",
+            "cpf_cnpj",
+            "idade",
+            "sexo",
+            "pedido_oracao",
+            "instituicao",
+            "valor_centavos",
+            "canal_entrega",
+            "consent_aceito",
+            "device_hash",
+            "turnstile_token",
+            # Saída (read-only)
+            "id",
+            "status",
+            "valor_reais_str",
+            "created_at",
+        ]
+        read_only_fields = PedidoCreateSerializer.Meta.read_only_fields
+        extra_kwargs = {
+            **PedidoCreateSerializer.Meta.extra_kwargs,
+            "device_hash": {"write_only": True, "required": False},
+        }
+
+    def create(self, validated_data):
+        """Cria o Pedido de doação anônima: user=None, AGUARDANDO_PAGAMENTO."""
+        # `turnstile_token` não é campo do model (validado na view).
+        validated_data.pop("turnstile_token", None)
+        consent_aceito = validated_data.pop("consent_aceito", False)
+
+        # Obtém o IP do request (mesma captura do fluxo pago) para o consent.
+        request = self.context.get("request")
+        consent_ip = None
+        if request:
+            x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+            if x_forwarded_for:
+                consent_ip = x_forwarded_for.split(",")[0].strip()
+            else:
+                consent_ip = request.META.get("REMOTE_ADDR")
+
+        validated_data["consent_aceito"] = consent_aceito
+        validated_data["consent_versao"] = POLITICA_VERSAO_ATUAL
+        validated_data["consent_aceito_at"] = timezone.now()
+        validated_data["consent_ip"] = consent_ip
+        validated_data["status"] = PedidoStatus.AGUARDANDO_PAGAMENTO
+        # Doação anônima: nunca vincula `request.user` — a conta é
+        # provisionada/vinculada no webhook de pagamento (Objetivo 3).
+        validated_data["user"] = None
+
+        # Pula o `create()` do `PedidoCreateSerializer` (que setaria `user` a
+        # partir do request); usa o `create()` padrão do ModelSerializer.
+        return serializers.ModelSerializer.create(self, validated_data)
+
+
 class PedidoResponseSerializer(serializers.ModelSerializer):
     """Serializer para resposta de criação de pedido (sem dados sensíveis)."""
 
@@ -319,6 +421,7 @@ class PedidoResponseSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "status",
+            "instituicao",
             "valor_reais_str",
             "canal_entrega",
             "created_at",
@@ -339,6 +442,7 @@ class PedidoStatusSerializer(serializers.ModelSerializer):
             "id",
             "status",
             "plano",
+            "instituicao",
             "valor_reais_str",
             "canal_entrega",
             "created_at",

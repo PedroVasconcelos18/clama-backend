@@ -9,6 +9,7 @@ from rest_framework.routers import DefaultRouter
 
 from clama.core.api.metrics_views import DistributionMetricsView, OverviewMetricsView
 from clama.documents.api.admin_views import AdminDocumentoContextoViewSet
+from clama.instituicoes.api.admin_views import AdminInstituicaoViewSet
 from clama.orders.api.admin_views import (
     AdminPedidoDetailView,
     AdminPedidoListView,
@@ -27,6 +28,7 @@ app_name = "admin_api"
 # Router para ViewSets
 router = DefaultRouter()
 router.register("admin/planos", AdminPlanViewSet, basename="admin-planos")
+router.register("admin/instituicoes", AdminInstituicaoViewSet, basename="admin-instituicoes")
 router.register("admin/prompts", AdminPromptTemplateViewSet, basename="admin-prompts")
 router.register("admin/documentos", AdminDocumentoContextoViewSet, basename="admin-documentos")
 

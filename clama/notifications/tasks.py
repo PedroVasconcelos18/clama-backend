@@ -8,13 +8,16 @@ import sentry_sdk
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.mail import EmailMessage
 from django.utils import timezone
 
+from clama.customers.services.account_provisioning import key_temp_password_doador
 from clama.freemium.models import FreemiumConfirmationToken
 from clama.freemium.temp_password import desencriptar_senha_do_cache
 from clama.notifications.services.email_sender import (
+    enviar_email_boas_vindas_doador,
     enviar_email_confirmacao_freemium,
     enviar_email_oracao,
     enviar_oracao_email_freemium,
@@ -119,7 +122,7 @@ def enviar_oracao_task(self, pedido_id: str) -> None:
         )
         try:
             # Backoff exponencial: 30s, 60s, 120s
-            countdown = 30 * (2 ** self.request.retries)
+            countdown = 30 * (2**self.request.retries)
             raise self.retry(exc=exc, countdown=countdown)
         except MaxRetriesExceededError:
             pedido.status = PedidoStatus.ERRO
@@ -278,9 +281,7 @@ def _enviar_por_whatsapp(pedido: Pedido) -> None:
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def enviar_email_confirmacao_freemium_task(
-    self, pedido_id: str, token: str
-) -> None:
+def enviar_email_confirmacao_freemium_task(self, pedido_id: str, token: str) -> None:
     """
     Envia o e-mail com o link de confirmação (double opt-in) do fluxo
     freemium.
@@ -335,8 +336,7 @@ def enviar_email_confirmacao_freemium_task(
                 "pedido_id": pedido_id,
                 "token_existe": token_obj is not None,
                 "token_expirado": (
-                    token_obj is not None
-                    and token_obj.expires_at <= timezone.now()
+                    token_obj is not None and token_obj.expires_at <= timezone.now()
                 ),
                 "token_usado": (
                     token_obj is not None and token_obj.used_at is not None
@@ -362,9 +362,7 @@ def enviar_email_confirmacao_freemium_task(
         or getattr(settings, "FRONTEND_URL", "")
         or "http://localhost:5173"
     ).rstrip("/")
-    link_confirmacao = (
-        f"{frontend_base}/confirmar?token={token}"
-    )
+    link_confirmacao = f"{frontend_base}/confirmar?token={token}"
 
     try:
         enviar_email_confirmacao_freemium(pedido, link_confirmacao)
@@ -379,7 +377,7 @@ def enviar_email_confirmacao_freemium_task(
             },
         )
         try:
-            countdown = 30 * (2 ** self.request.retries)
+            countdown = 30 * (2**self.request.retries)
             raise self.retry(exc=exc, countdown=countdown)
         except MaxRetriesExceededError:
             logger.error(
@@ -390,6 +388,101 @@ def enviar_email_confirmacao_freemium_task(
                 },
             )
             sentry_sdk.capture_exception(exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def enviar_email_boas_vindas_doador_task(self, user_id: str) -> None:
+    """
+    Envia o e-mail de boas-vindas com credenciais ao doador recém-provisionado.
+
+    Idempotente: a senha temporária no cache (chave
+    `doador:temp_password:{user_id}`, escrita pelo serviço de provisionamento)
+    é o flag "ainda não enviado". Ausente → já enviado (e apagado) OU expirou;
+    em ambos os casos não há credencial útil a entregar → no-op. Só é
+    despachada pelo webhook quando a conta foi recém-criada (`criada=True`),
+    então o webhook reentrante não agenda um 2º e-mail.
+
+    Retry padrão da casa: 3 tentativas com backoff exponencial 30s, 60s, 120s.
+    O `cache.delete` só ocorre após envio confirmado (retry re-lê a senha).
+
+    Args:
+        user_id: UUID do User (string).
+    """
+    user_model = get_user_model()
+    try:
+        user = user_model.objects.get(id=user_id)
+    except user_model.DoesNotExist:
+        logger.warning(
+            "enviar_email_boas_vindas_doador_user_nao_encontrado",
+            extra={
+                "event": "doador_boas_vindas_user_not_found",
+                "user_id": user_id,
+            },
+        )
+        return
+
+    cache_key = key_temp_password_doador(user_id)
+    senha_cifrada = cache.get(cache_key) or ""
+    senha_temp = desencriptar_senha_do_cache(senha_cifrada)
+
+    # Idempotência: sem senha no cache não há o que enviar (já enviado ou
+    # expirado). Diferente do e-mail de oração freemium, aqui o e-mail SÓ
+    # existe para entregar a credencial — sem ela, não faz sentido enviar.
+    if not senha_temp:
+        logger.info(
+            "enviar_email_boas_vindas_doador_idempotente",
+            extra={
+                "event": "doador_boas_vindas_sem_senha_cache",
+                "user_id": user_id,
+            },
+        )
+        return
+
+    frontend_base = (
+        getattr(settings, "FRONTEND_BASE_URL", "")
+        or getattr(settings, "FRONTEND_URL", "")
+        or "http://localhost:5173"
+    ).rstrip("/")
+    login_url = f"{frontend_base}/login"
+
+    try:
+        enviar_email_boas_vindas_doador(user, senha_temp, login_url)
+    except Exception as exc:
+        logger.warning(
+            "enviar_email_boas_vindas_doador_erro",
+            extra={
+                "event": "doador_boas_vindas_email_error",
+                "user_id": user_id,
+                "attempt": self.request.retries + 1,
+                "error": str(exc),
+            },
+        )
+        try:
+            countdown = 30 * (2**self.request.retries)
+            raise self.retry(exc=exc, countdown=countdown)
+        except MaxRetriesExceededError:
+            logger.error(
+                "enviar_email_boas_vindas_doador_falha_persistente",
+                extra={
+                    "event": "doador_boas_vindas_email_failed",
+                    "user_id": user_id,
+                },
+            )
+            sentry_sdk.capture_exception(exc)
+            return
+
+    # Delivery confirmada — apaga a senha do cache (fecha a idempotência:
+    # uma re-entrega da task vira no-op). Ordem importa: só apaga após envio
+    # bem-sucedido, para que retries de falha ainda encontrem a senha.
+    cache.delete(cache_key)
+
+    logger.info(
+        "enviar_email_boas_vindas_doador_enviado",
+        extra={
+            "event": "doador_boas_vindas_email_sent",
+            "user_id": user_id,
+        },
+    )
 
 
 @shared_task
@@ -435,14 +528,14 @@ def enviar_alerta_admin_task(pedido_id: str) -> None:
 ID do Pedido: {pedido.id}
 Nome: {pedido.nome}
 Email: {pedido.email}
-Telefone: {pedido.telefone or 'Não informado'}
+Telefone: {pedido.telefone or "Não informado"}
 Plano: {pedido.plano.nome}
 Valor: {pedido.valor_reais_str}
 Canal de Entrega: {pedido.canal_entrega}
 Número de Retentativas: {pedido.retry_count}
 
 Último Erro:
-{pedido.last_error or 'Não registrado'}
+{pedido.last_error or "Não registrado"}
 
 ---
 Acesse o admin para mais detalhes: {settings.FRONTEND_URL}/admin/pedidos/{pedido.id}

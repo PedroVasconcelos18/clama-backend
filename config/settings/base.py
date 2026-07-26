@@ -90,6 +90,7 @@ LOCAL_APPS = [
     "clama.core",
     "clama.plans",
     "clama.orders",
+    "clama.instituicoes",
     "clama.prompts",
     "clama.payments",
     "clama.prayer_generation",
@@ -380,6 +381,11 @@ REST_FRAMEWORK = {
         # clique humano + retry > 5). Confirmar é mais barato — janela mais
         # generosa.
         "freemium_confirmar_ip": "30/hour",
+        # Doação paga sem conta (LP anônima). Cada request cria um Pedido que
+        # segue para pagamento real (Pix) — janela apertada por IP para conter
+        # abuso/bots, mas folgada o bastante para retries legítimos. Vai junto
+        # com CAPTCHA Turnstile + checagem de e-mail descartável na view.
+        "doacao_ip": "10/hour",
         # Customer auth (G2.a backend, spec lp-user-existence-gate). Login
         # por IP (anti brute-force credenciais), change-password por user
         # (anti spray pós-takeover de sessão).

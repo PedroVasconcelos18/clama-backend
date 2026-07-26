@@ -11,6 +11,7 @@ escapem das 3 tentativas internas (ex.: container reciclado mid-retry).
 
 import logging
 import smtplib
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import requests
@@ -20,6 +21,9 @@ from django.template.loader import render_to_string
 
 from clama.core.retry import with_retry
 from clama.orders.models import Pedido
+
+if TYPE_CHECKING:
+    from clama_backend.users.models import User
 
 logger = logging.getLogger("clama.notifications.email")
 
@@ -38,9 +42,9 @@ CLAMA_URL = "https://clama.me"
 def _build_whatsapp_share_url(oracao_texto: str) -> str:
     """Monta a URL `wa.me` pré-preenchida — espelha o componente WhatsAppShareButton do front."""
     mensagem = (
-        f'Recebi essa oração através do Clama:\n\n'
+        f"Recebi essa oração através do Clama:\n\n"
         f'"{oracao_texto}"\n\n'
-        f'Faça também seu pedido: {CLAMA_URL}'
+        f"Faça também seu pedido: {CLAMA_URL}"
     )
     return f"https://wa.me/?text={quote(mensagem)}"
 
@@ -279,6 +283,67 @@ def enviar_email_recuperacao_senha(
         "Email de recuperação de senha enviado",
         extra={
             "event": "email_recuperacao_senha_sent",
+            "email_dominio": dominio,
+        },
+    )
+
+
+@with_retry(
+    max_attempts=3,
+    backoff_seconds=[1, 2, 4],
+    retriable_exceptions=_EMAIL_RETRY_EXCEPTIONS,
+)
+def enviar_email_boas_vindas_doador(
+    user: "User",
+    senha_temporaria: str,
+    login_url: str,
+) -> None:
+    """
+    Envia o e-mail de boas-vindas com credenciais para a conta recém-criada
+    do doador (doação anônima cujo e-mail ainda não tinha conta).
+
+    Espelha `enviar_email_recuperacao_senha`: mesmo bloco de credenciais
+    (`login_email`, `senha_temporaria`, `login_url`) e mesmo `@with_retry`.
+    Só é chamado quando a conta foi de fato criada — nunca no vínculo a uma
+    conta existente (anti-enumeração). O log não inclui a senha (apenas o
+    domínio do e-mail para diagnóstico sem vazar PII).
+
+    Args:
+        user: User recém-provisionado (login = `user.email`).
+        primeiro_nome derivado de `user.nome_completo` (fallback "Amada").
+        senha_temporaria: senha temporária em texto plano (usada uma única
+            vez no template; nunca logada).
+        login_url: URL absoluta do login (`{frontend_base}/login`).
+    """
+    login_email = user.email
+    primeiro_nome = user.nome_completo.split()[0] if user.nome_completo else "Amada"
+
+    context = {
+        "primeiro_nome": primeiro_nome,
+        "login_email": login_email,
+        "senha_temporaria": senha_temporaria,
+        "login_url": login_url,
+    }
+
+    body_html = render_to_string("email/boas_vindas_doador.html", context)
+    body_text = render_to_string("email/boas_vindas_doador.txt", context)
+
+    subject = "Bem-vinda ao Clama — seus dados de acesso"
+    email = EmailMultiAlternatives(
+        subject=subject,
+        body=body_text,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[login_email],
+        reply_to=["contato@clama.me"],
+    )
+    email.attach_alternative(body_html, "text/html")
+    email.send()
+
+    dominio = login_email.rsplit("@", 1)[-1] if "@" in login_email else "?"
+    logger.info(
+        "Email de boas-vindas do doador enviado",
+        extra={
+            "event": "email_boas_vindas_doador_sent",
             "email_dominio": dominio,
         },
     )

@@ -4,6 +4,7 @@ Serializers para API admin de pedidos.
 
 from rest_framework import serializers
 
+from clama.instituicoes.models import Instituicao
 from clama.orders.models import Pedido
 from clama.payments.models import WebhookEvento
 from clama.plans.models import Plan
@@ -33,6 +34,14 @@ class PlanoNestedSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plan
         fields = ["id", "nome", "valor_reais_str"]
+
+
+class InstituicaoNestedSerializer(serializers.ModelSerializer):
+    """Serializer nested para instituição em detalhes do pedido."""
+
+    class Meta:
+        model = Instituicao
+        fields = ["id", "nome", "logo"]
 
 
 class AdminPedidoListSerializer(serializers.ModelSerializer):
@@ -71,6 +80,7 @@ class AdminPedidoDetailSerializer(serializers.ModelSerializer):
     """
 
     plano = PlanoNestedSerializer(read_only=True)
+    instituicao = InstituicaoNestedSerializer(read_only=True)
     valor_reais_str = serializers.CharField(read_only=True)
     webhook_events = WebhookEventoSerializer(many=True, read_only=True)
 
@@ -91,6 +101,7 @@ class AdminPedidoDetailSerializer(serializers.ModelSerializer):
             "oracao_gerada",
             # Plano e valor
             "plano",
+            "instituicao",
             "valor_centavos",
             "valor_reais_str",
             "eh_gratuito",

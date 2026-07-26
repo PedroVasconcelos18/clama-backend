@@ -27,6 +27,8 @@ urlpatterns = [
     path("api/", include("clama.plans.api.urls")),
     # Orders API
     path("api/", include("clama.orders.api.urls")),
+    # Instituições API
+    path("api/", include("clama.instituicoes.api.urls")),
     # Payments API
     path("api/", include("clama.payments.api.urls")),
     # Notifications API (webhooks)

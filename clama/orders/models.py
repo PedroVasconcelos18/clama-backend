@@ -112,6 +112,16 @@ class Pedido(UUIDPKModel, TimestampedModel):
     )
     valor_centavos = models.IntegerField(verbose_name="Valor (centavos)")
 
+    # Instituição parceira opcional para direcionamento do repasse (20%).
+    instituicao = models.ForeignKey(
+        "instituicoes.Instituicao",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="pedidos",
+        verbose_name="Instituição",
+    )
+
     # Vínculo com User (criado no fluxo freemium; nullable para pedidos pagos
     # que ainda não tem conta associada).
     user = models.ForeignKey(

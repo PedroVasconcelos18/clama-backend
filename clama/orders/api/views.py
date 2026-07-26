@@ -2,6 +2,12 @@
 Views da API de pedidos.
 """
 
+import logging
+
+import requests
+import sentry_sdk
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_ipv46_address
 from django.db import transaction
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework import status
@@ -13,13 +19,40 @@ from rest_framework.throttling import ScopedRateThrottle
 from clama.core.exceptions import PastoralAPIException
 from clama.core.permissions import IsCustomerPasswordCurrent
 from clama.core.throttles import EmailScopedThrottle
+from clama.freemium.exceptions import EmailDescartavelError, TurnstileInvalidoError
+from clama.freemium.services.email_blacklist import is_disposable
+from clama.freemium.services.turnstile_client import TurnstileClient
 from clama.orders.api.serializers import (
+    DoacaoAnonimaCreateSerializer,
     PedidoCreateSerializer,
     PedidoGratuitoCreateSerializer,
     PedidoResponseSerializer,
     PedidoStatusSerializer,
 )
 from clama.orders.models import Pedido
+
+logger = logging.getLogger("clama.orders.views")
+
+
+def _ip_request(request) -> str | None:
+    """
+    Extrai o IP do request (X-Forwarded-For → REMOTE_ADDR), validando o
+    formato. Retorna None se ausente/malformado. Espelha o helper do fluxo
+    freemium — usado como `remoteip` na verificação Turnstile.
+    """
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded:
+        ip = forwarded.split(",")[0].strip()
+    else:
+        ip = request.META.get("REMOTE_ADDR")
+
+    if not ip:
+        return None
+    try:
+        validate_ipv46_address(ip)
+    except ValidationError:
+        return None
+    return ip
 
 
 class PedidoCreateView(CreateAPIView):
@@ -151,6 +184,91 @@ class PedidoGratuitoCreateView(CreateAPIView):
             400: OpenApiResponse(description="Erro de validação"),
             401: OpenApiResponse(description="Não autenticado"),
             429: OpenApiResponse(description="Rate limit excedido"),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
+
+class DoacaoAnonimaCreateView(CreateAPIView):
+    """
+    POST /api/doacoes/ — doação paga SEM conta (LP, doador anônimo).
+
+    Coexiste com o freemium grátis. Pipeline anti-fraude (na ordem, ANTES de
+    qualquer escrita), espelhando `PedidoFreemiumCreateView` — porém SEM a
+    `FreemiumBlacklist` e SEM o gate de user-existente (doação é repetível e
+    um doador com conta pode doar):
+      1. Deserializa o payload (valida valor, consent, CPF/CNPJ, turnstile_token).
+      2. Valida o CAPTCHA Turnstile (primeiro — mata bots antes de qualquer trabalho).
+      3. Checa e-mail descartável.
+      4. Cria o Pedido anônimo (`user=None`, AGUARDANDO_PAGAMENTO).
+
+    Retorna 201 com o id do pedido; o front segue para
+    `POST /api/pedidos/<id>/checkout/` (Pix, `AllowAny`). O provisionamento /
+    vínculo da conta acontece depois, no webhook de pagamento (idempotente).
+    """
+
+    serializer_class = DoacaoAnonimaCreateSerializer
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "doacao_ip"
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        turnstile_token = data["turnstile_token"]
+        email = data.get("email") or ""
+        request_ip = _ip_request(request)
+
+        # 1. CAPTCHA Turnstile primeiro — antes de qualquer escrita. Token é
+        # single-use na Cloudflare: valida UMA vez aqui, não revalida no checkout.
+        turnstile = TurnstileClient()
+        try:
+            captcha_ok = turnstile.validate(turnstile_token, ip=request_ip)
+        except requests.RequestException as exc:
+            sentry_sdk.capture_exception(exc)
+            logger.error(
+                "Falha permanente ao validar Turnstile (doação)",
+                extra={
+                    "event": "doacao_turnstile_falha_permanente",
+                    "error": str(exc),
+                },
+            )
+            raise TurnstileInvalidoError() from exc
+
+        if not captcha_ok:
+            raise TurnstileInvalidoError()
+
+        # 2. Anti e-mail descartável (mesma checagem do freemium).
+        if is_disposable(email):
+            raise EmailDescartavelError()
+
+        # 3. Cria o Pedido anônimo (user=None).
+        pedido = serializer.save()
+
+        response_serializer = PedidoResponseSerializer(pedido)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        tags=["Pedidos"],
+        summary="Criar doação paga sem conta",
+        description=(
+            "Cria um pedido de doação para doador anônimo (sem conta), "
+            "validando Turnstile e e-mail descartável antes de qualquer "
+            "escrita. Retorna o ID do pedido para prosseguir ao checkout."
+        ),
+        request=DoacaoAnonimaCreateSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=PedidoResponseSerializer,
+                description="Doação criada (aguardando pagamento)",
+            ),
+            400: OpenApiResponse(
+                description="CAPTCHA inválido / e-mail descartável / dados inválidos",
+            ),
+            429: OpenApiResponse(description="Rate limit por IP excedido"),
         },
     )
     def post(self, request, *args, **kwargs):

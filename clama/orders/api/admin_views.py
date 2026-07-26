@@ -9,7 +9,6 @@ from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
 from clama.core.api.admin_base import AdminAPIView, AdminGenericAPIView
 from clama.core.exceptions import PastoralAPIException
@@ -89,13 +88,18 @@ class AdminPedidoListView(AdminGenericAPIView, ListAPIView):
         # Busca por nome ou email
         q = self.request.query_params.get("q")
         if q:
-            queryset = queryset.filter(
-                Q(nome__icontains=q) | Q(email__icontains=q)
-            )
+            queryset = queryset.filter(Q(nome__icontains=q) | Q(email__icontains=q))
 
         # Ordenação
         ordering = self.request.query_params.get("ordering", "-created_at")
-        allowed_orderings = ["created_at", "-created_at", "valor_centavos", "-valor_centavos", "status", "-status"]
+        allowed_orderings = [
+            "created_at",
+            "-created_at",
+            "valor_centavos",
+            "-valor_centavos",
+            "status",
+            "-status",
+        ]
         if ordering in allowed_orderings:
             queryset = queryset.order_by(ordering)
 
@@ -106,14 +110,28 @@ class AdminPedidoListView(AdminGenericAPIView, ListAPIView):
         summary="Listar pedidos",
         description="Lista pedidos com filtros, ordenação e paginação.",
         parameters=[
-            OpenApiParameter(name="status", description="Status (PAGO, ERRO, etc). Múltiplos: ERRO,AGUARDANDO_REENVIO"),
-            OpenApiParameter(name="canal", description="Canal de entrega (EMAIL, WHATSAPP)"),
+            OpenApiParameter(
+                name="status",
+                description="Status (PAGO, ERRO, etc). Múltiplos: ERRO,AGUARDANDO_REENVIO",
+            ),
+            OpenApiParameter(
+                name="canal", description="Canal de entrega (EMAIL, WHATSAPP)"
+            ),
             OpenApiParameter(name="plano", description="UUID do plano"),
-            OpenApiParameter(name="created_after", description="Data mínima (YYYY-MM-DD)"),
-            OpenApiParameter(name="created_before", description="Data máxima (YYYY-MM-DD)"),
+            OpenApiParameter(
+                name="created_after", description="Data mínima (YYYY-MM-DD)"
+            ),
+            OpenApiParameter(
+                name="created_before", description="Data máxima (YYYY-MM-DD)"
+            ),
             OpenApiParameter(name="q", description="Busca por nome ou email"),
-            OpenApiParameter(name="ordering", description="Ordenação (-created_at, valor_centavos, status)"),
-            OpenApiParameter(name="limit", description="Itens por página (default: 20, max: 100)"),
+            OpenApiParameter(
+                name="ordering",
+                description="Ordenação (-created_at, valor_centavos, status)",
+            ),
+            OpenApiParameter(
+                name="limit", description="Itens por página (default: 20, max: 100)"
+            ),
             OpenApiParameter(name="offset", description="Offset da paginação"),
         ],
         responses={
@@ -135,7 +153,9 @@ class AdminPedidoDetailView(AdminGenericAPIView, RetrieveAPIView):
     """
 
     serializer_class = AdminPedidoDetailSerializer
-    queryset = Pedido.objects.select_related("plano").prefetch_related("webhook_events")
+    queryset = Pedido.objects.select_related("plano", "instituicao").prefetch_related(
+        "webhook_events"
+    )
     lookup_field = "id"
 
     def get_object(self):

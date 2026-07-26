@@ -19,6 +19,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from clama.core.exceptions import PastoralAPIException
+from clama.customers.services.account_provisioning import (
+    provisionar_ou_vincular_conta_doador,
+)
+from clama.instituicoes.services.repasse import registrar_repasse
 from clama.orders.models import Pedido
 from clama.payments.exceptions import PaymentProviderError
 from clama.payments.models import WebhookEvento, WebhookEventoStatus, WebhookProvider
@@ -89,7 +93,12 @@ class MercadoPagoWebhookView(APIView):
                 extra={"event": "mercadopago_webhook_invalid", "reason": "missing_id"},
             )
             return Response(
-                {"error": {"code": "invalid_payload", "message": "Missing notification id"}},
+                {
+                    "error": {
+                        "code": "invalid_payload",
+                        "message": "Missing notification id",
+                    }
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         external_event_id = str(external_event_id)
@@ -130,7 +139,9 @@ class MercadoPagoWebhookView(APIView):
                 # 4xx NÃO é transiente (token errado, pagamento inexistente) — o MP
                 # retentar não resolve. Marca ignorado + alerta admin e retorna 200,
                 # evitando loop infinito de retry/500 (AD-5: não classificar não-retriável como 500).
-                webhook_evento.mark_ignored(f"fetch 4xx do Mercado Pago: {exc.upstream_status}")
+                webhook_evento.mark_ignored(
+                    f"fetch 4xx do Mercado Pago: {exc.upstream_status}"
+                )
                 sentry_sdk.capture_message(
                     "Mercado Pago webhook: fetch 4xx (config/credencial ou pagamento inexistente)",
                     level="error",
@@ -162,7 +173,9 @@ class MercadoPagoWebhookView(APIView):
 
         # Só provisiona se aprovado (AD-4). Qualquer outro status → ignora + 200.
         if pagamento.status != StatusPagamento.APROVADO:
-            webhook_evento.mark_ignored(f"pagamento não-aprovado: {pagamento.raw_status}")
+            webhook_evento.mark_ignored(
+                f"pagamento não-aprovado: {pagamento.raw_status}"
+            )
             return Response({"status": "ignored"}, status=status.HTTP_200_OK)
 
         external_reference = pagamento.external_reference
@@ -173,9 +186,26 @@ class MercadoPagoWebhookView(APIView):
         # Provisão sob lock (AD-5): state guard garante provisão única.
         try:
             with transaction.atomic():
-                pedido = Pedido.objects.select_for_update().get(id=external_reference)
+                try:
+                    pedido = Pedido.objects.select_for_update().get(
+                        id=external_reference
+                    )
+                except (Pedido.DoesNotExist, ValidationError, ValueError):
+                    # external_reference inexistente ou não-UUID: nada a processar.
+                    # Só o LOOKUP entra aqui — exceções nos efeitos abaixo NÃO devem
+                    # ser silenciadas como "não encontrado" (ver except externo).
+                    webhook_evento.mark_ignored(
+                        f"pedido não encontrado: {external_reference}"
+                    )
+                    return Response({"status": "ignored"}, status=status.HTTP_200_OK)
                 # Re-lê o status via state guard; 409 se já não está AGUARDANDO_PAGAMENTO.
                 pedido.marcar_como_pago()
+                # Registra o repasse à instituição (idempotente; no-op sem instituição).
+                registrar_repasse(pedido)
+                # Provisiona/vincula a conta do doador (idempotente; no-op se o
+                # pedido já tem user). Anti-enumeração: só devolve `criada=True`
+                # quando a conta foi de fato criada agora.
+                user, conta_criada = provisionar_ou_vincular_conta_doador(pedido)
                 webhook_evento.mark_processed(pedido=pedido)
 
                 pedido_id = str(pedido.id)
@@ -183,11 +213,33 @@ class MercadoPagoWebhookView(APIView):
                 from clama.prayer_generation.tasks import gerar_oracao_task
 
                 transaction.on_commit(lambda: gerar_oracao_task.delay(pedido_id))
-        except (Pedido.DoesNotExist, ValidationError, ValueError):
-            # ValidationError: external_reference não é um UUID válido (UUIDField levanta
-            # django.core.exceptions.ValidationError, não ValueError, no lookup).
-            webhook_evento.mark_ignored(f"pedido não encontrado: {external_reference}")
-            return Response({"status": "ignored"}, status=status.HTTP_200_OK)
+
+                # Só envia credenciais quando a conta nasceu neste webhook.
+                # No vínculo a conta existente (conta_criada=False) o recibo é
+                # a própria oração — nada de credenciais.
+                if conta_criada and user is not None:
+                    user_id_str = str(user.id)
+
+                    def _on_commit_dispatch_boas_vindas():
+                        from clama.notifications.tasks import (
+                            enviar_email_boas_vindas_doador_task,
+                        )
+
+                        try:
+                            enviar_email_boas_vindas_doador_task.delay(user_id_str)
+                        except Exception as exc:
+                            sentry_sdk.capture_exception(exc)
+                            logger.error(
+                                "Falha ao enfileirar enviar_email_boas_vindas_doador_task",
+                                extra={
+                                    "event": "doador_enqueue_email_task_failed",
+                                    "pedido_id": pedido_id,
+                                    "user_id": user_id_str,
+                                    "error": str(exc),
+                                },
+                            )
+
+                    transaction.on_commit(_on_commit_dispatch_boas_vindas)
         except PastoralAPIException:
             # AD-5: 409 de estado (pedido já pago) = sucesso idempotente → 200, nunca 500.
             webhook_evento.mark_ignored("pedido já processado (idempotente)")
