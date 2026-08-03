@@ -4,7 +4,8 @@ Helpers de moeda para o Clama.
 Convenção: valores monetários são armazenados em centavos (int) no banco de dados e na API.
 Conversão para string com formato "R$ XX,YY" é feita apenas na camada de apresentação.
 """
-from decimal import Decimal, ROUND_DOWN
+
+from decimal import ROUND_DOWN, Decimal
 
 
 def reais_to_centavos(value) -> int:

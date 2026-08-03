@@ -62,8 +62,4 @@ class Command(BaseCommand):
             is_clama_admin=True,  # É admin do Clama
         )
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Admin criado com sucesso: {user.email}"
-            )
-        )
+        self.stdout.write(self.style.SUCCESS(f"Admin criado com sucesso: {user.email}"))

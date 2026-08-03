@@ -1,8 +1,12 @@
 """
 Views do app core.
 """
+
 from django.db import connection
+from django.middleware.csrf import get_token
+from django.utils.decorators import method_decorator
 from django.utils.timezone import now
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -51,3 +55,26 @@ class HealthCheckView(APIView):
                 "database": db_status,
             }
         )
+
+
+class CSRFTokenView(APIView):
+    """
+    Entrega o token de CSRF para o cliente.
+
+    `CSRF_COOKIE_HTTPONLY = True` impede o JavaScript de ler o cookie, então o
+    padrão double-submit nativo do Django não funciona aqui. Este endpoint
+    devolve o token no corpo; o cliente o mantém em memória e o reenvia no
+    header `X-CSRFToken`.
+
+    Isso é o que permite ao widget de comentários — que a partir do Epic 6 roda
+    dentro de uma página servida pelo WordPress — obter a prova de CSRF **sem
+    depender de nada que o WordPress precise fornecer** (AR-FRONTEIRAS: o
+    WordPress nunca é autoridade sobre identidade).
+    """
+
+    permission_classes = []
+    authentication_classes = []
+
+    @method_decorator(ensure_csrf_cookie)
+    def get(self, request):
+        return Response({"csrf_token": get_token(request)})

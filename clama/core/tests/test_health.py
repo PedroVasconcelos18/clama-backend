@@ -1,8 +1,8 @@
 """
 Testes para o endpoint de healthcheck.
 """
+
 import pytest
-from django.urls import reverse
 from rest_framework.test import APIClient
 
 from clama.core import __version__
@@ -47,7 +47,12 @@ class TestHealthCheckView:
     def test_health_has_all_required_keys(self):
         """Healthcheck deve retornar todas as 4 chaves esperadas."""
         response = self.client.get("/api/health/")
-        assert set(response.data.keys()) == {"status", "version", "timestamp", "database"}
+        assert set(response.data.keys()) == {
+            "status",
+            "version",
+            "timestamp",
+            "database",
+        }
 
     def test_health_no_auth_required(self):
         """Healthcheck deve funcionar sem autenticação."""

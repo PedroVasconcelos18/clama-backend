@@ -19,9 +19,7 @@ MANTER SINCRONIZADO:
 # =============================================================================
 
 # Usado quando há problemas de conexão ou servidor
-MSG_NETWORK_ERROR = (
-    "Tivemos um soluço na conexão. Tenta de novo em um minutinho?"
-)
+MSG_NETWORK_ERROR = "Tivemos um soluço na conexão. Tenta de novo em um minutinho?"
 
 # Usado quando um erro inesperado acontece
 MSG_UNKNOWN_ERROR = (
@@ -34,9 +32,7 @@ MSG_UNKNOWN_ERROR = (
 # =============================================================================
 
 # Erro genérico de validação
-MSG_VALIDATION_GENERIC = (
-    "Confira os campos preenchidos e tenta de novo."
-)
+MSG_VALIDATION_GENERIC = "Confira os campos preenchidos e tenta de novo."
 
 
 # =============================================================================
@@ -106,9 +102,7 @@ MSG_WHATSAPP_FAILED = (
 )
 
 # Hint para usuária ao escolher WhatsApp
-MSG_WHATSAPP_HINT = (
-    "Vamos te enviar pelo WhatsApp em até 2 minutos. Confira que seu número está correto."
-)
+MSG_WHATSAPP_HINT = "Vamos te enviar pelo WhatsApp em até 2 minutos. Confira que seu número está correto."
 
 
 # =============================================================================
@@ -126,19 +120,13 @@ MSG_NOT_FOUND = (
 # =============================================================================
 
 # Credenciais inválidas
-MSG_INVALID_CREDENTIALS = (
-    "E-mail ou senha não conferem. Tenta de novo."
-)
+MSG_INVALID_CREDENTIALS = "E-mail ou senha não conferem. Tenta de novo."
 
 # Não autenticado (precisa fazer login)
-MSG_NOT_AUTHENTICATED = (
-    "Você precisa entrar antes de acessar essa parte."
-)
+MSG_NOT_AUTHENTICATED = "Você precisa entrar antes de acessar essa parte."
 
 # Sem permissão (autenticado mas não é admin)
-MSG_NO_PERMISSION = (
-    "Esse espaço é só para admins do Clama."
-)
+MSG_NO_PERMISSION = "Esse espaço é só para admins do Clama."
 
 
 # =============================================================================
@@ -152,28 +140,19 @@ MSG_CONFIRMACAO_EMAIL = (
 )
 
 # Mensagem de confirmação após pagamento (WhatsApp)
-MSG_CONFIRMACAO_WHATSAPP = (
-    "Sua oração chegará no seu WhatsApp em até 2 minutos."
-)
+MSG_CONFIRMACAO_WHATSAPP = "Sua oração chegará no seu WhatsApp em até 2 minutos."
 
 # Mensagem durante geração
-MSG_GERANDO_ORACAO = (
-    "Estamos preparando sua oração com cuidado."
-)
+MSG_GERANDO_ORACAO = "Estamos preparando sua oração com cuidado."
 
 # Mensagem quando enviada
-MSG_ORACAO_ENVIADA_EMAIL = (
-    "Sua oração já está aí! Confira seu e-mail."
-)
+MSG_ORACAO_ENVIADA_EMAIL = "Sua oração já está aí! Confira seu e-mail."
 
-MSG_ORACAO_ENVIADA_WHATSAPP = (
-    "Sua oração já está aí! Confira seu WhatsApp."
-)
+MSG_ORACAO_ENVIADA_WHATSAPP = "Sua oração já está aí! Confira seu WhatsApp."
 
 # Mensagem de erro definitivo na confirmação
 MSG_ERRO_DEFINITIVO = (
-    "Tivemos um soluço — vamos reenviar logo. "
-    "Se demorar, escreva pra contato@clama.me."
+    "Tivemos um soluço — vamos reenviar logo. Se demorar, escreva pra contato@clama.me."
 )
 
 
@@ -182,9 +161,7 @@ MSG_ERRO_DEFINITIVO = (
 # =============================================================================
 
 # Telefone inválido
-MSG_TELEFONE_INVALIDO = (
-    "Confira seu telefone com DDD — vamos enviar a oração por aqui."
-)
+MSG_TELEFONE_INVALIDO = "Confira seu telefone com DDD — vamos enviar a oração por aqui."
 
 
 # =============================================================================
@@ -197,9 +174,7 @@ MSG_FREEMIUM_OTP_INVALIDO = (
 )
 
 # Rate limit do envio de OTP por telefone
-MSG_FREEMIUM_OTP_RATE_LIMIT = (
-    "Aguarde 1 minuto antes de pedir um novo código."
-)
+MSG_FREEMIUM_OTP_RATE_LIMIT = "Aguarde 1 minuto antes de pedir um novo código."
 
 # Identificadores já usados (CPF/email/telefone na blacklist)
 MSG_FREEMIUM_BLACKLIST_HIT = (
@@ -231,20 +206,14 @@ MSG_FREEMIUM_PEDIDO_EM_ANDAMENTO = (
 
 # Credenciais inválidas no /api/customer/auth/login/. Mensagem idêntica para
 # email inexistente, senha errada e admin tentando logar (sem oracle de role).
-MSG_CUSTOMER_LOGIN_FALHOU = (
-    "E-mail ou senha não conferem. Tenta de novo."
-)
+MSG_CUSTOMER_LOGIN_FALHOU = "E-mail ou senha não conferem. Tenta de novo."
 
 # Senha trocada com sucesso no /change-password/.
-MSG_CUSTOMER_PASSWORD_TROCADA = (
-    "Senha atualizada com sucesso."
-)
+MSG_CUSTOMER_PASSWORD_TROCADA = "Senha atualizada com sucesso."
 
 # 403 quando user logado tem force_change_password=True e tenta acessar
 # endpoint protegido (exceto /me/ e /change-password/).
-MSG_CUSTOMER_FORCE_CHANGE_PASSWORD = (
-    "Antes de continuar, atualize sua senha."
-)
+MSG_CUSTOMER_FORCE_CHANGE_PASSWORD = "Antes de continuar, atualize sua senha."
 
 # Resposta SEMPRE genérica do /forgot-password/ — não revela se o e-mail
 # existe na base (anti-enumeração de contas). Mesma mensagem para e-mail

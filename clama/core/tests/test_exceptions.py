@@ -1,11 +1,8 @@
 """
 Testes para as exceções pastorais do Clama.
 """
-import pytest
-from django.test import override_settings
-from rest_framework import status
+
 from rest_framework.decorators import api_view
-from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory
 
 from clama.core.exceptions import ClamaBaseException, PastoralAPIException
@@ -89,4 +86,7 @@ class TestPastoralExceptionHandler:
         assert response.status_code == 422
         assert "error" in response.data
         assert response.data["error"]["code"] == "validation_error"
-        assert response.data["error"]["pastoral_message"] == "Por favor, verifique os dados informados."
+        assert (
+            response.data["error"]["pastoral_message"]
+            == "Por favor, verifique os dados informados."
+        )

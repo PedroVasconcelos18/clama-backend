@@ -1,11 +1,13 @@
 """
 Decorator de retry com backoff exponencial.
 """
+
 import contextvars
 import logging
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 import requests
 
@@ -107,7 +109,10 @@ def with_retry(
                 except Exception as e:
                     # Verifica se é uma exceção com status_code (ex: anthropic.APIStatusError)
                     status_code = getattr(e, "status_code", None)
-                    if status_code is not None and status_code in retriable_status_codes:
+                    if (
+                        status_code is not None
+                        and status_code in retriable_status_codes
+                    ):
                         last_exc = e
                         logger.warning(
                             "Retry attempt %d/%d due to status code %d: %s",

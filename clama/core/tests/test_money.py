@@ -1,9 +1,8 @@
 """
 Testes para os helpers de moeda do Clama.
 """
-from decimal import Decimal
 
-import pytest
+from decimal import Decimal
 
 from clama.core.money import centavos_to_reais_str, reais_to_centavos
 

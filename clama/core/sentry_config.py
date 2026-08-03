@@ -64,7 +64,9 @@ def _redact_dict(data: dict) -> dict:
             redacted[key] = _redact_dict(value)
         elif isinstance(value, list):
             redacted[key] = [
-                _redact_dict(item) if isinstance(item, dict) else _redact_value(key, item)
+                _redact_dict(item)
+                if isinstance(item, dict)
+                else _redact_value(key, item)
                 for item in value
             ]
         else:

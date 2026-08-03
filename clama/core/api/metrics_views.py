@@ -30,7 +30,11 @@ def _get_period_range(period: str):
     elif period == "month":
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         # Último dia do mês
-        next_month = start.replace(month=start.month % 12 + 1) if start.month < 12 else start.replace(year=start.year + 1, month=1)
+        next_month = (
+            start.replace(month=start.month % 12 + 1)
+            if start.month < 12
+            else start.replace(year=start.year + 1, month=1)
+        )
         end = next_month - timedelta(seconds=1)
     else:
         return None, None
@@ -90,7 +94,9 @@ Retorna métricas agregadas para o período especificado.
 
         # Contagens por status
         pedidos_total = pedidos.count()
-        pedidos_pagos = pedidos.exclude(status=PedidoStatus.AGUARDANDO_PAGAMENTO).count()
+        pedidos_pagos = pedidos.exclude(
+            status=PedidoStatus.AGUARDANDO_PAGAMENTO
+        ).count()
         pedidos_enviadas = pedidos.filter(status=PedidoStatus.ENVIADA).count()
         pedidos_erro = pedidos.filter(
             status__in=[PedidoStatus.ERRO, PedidoStatus.AGUARDANDO_REENVIO]
@@ -105,20 +111,22 @@ Retorna métricas agregadas para o período especificado.
         # Ticket médio
         ticket_medio = faturamento_centavos // pedidos_pagos if pedidos_pagos > 0 else 0
 
-        return Response({
-            "period": period,
-            "range": {
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-            },
-            "pedidos_total": pedidos_total,
-            "pedidos_pagos": pedidos_pagos,
-            "pedidos_enviadas": pedidos_enviadas,
-            "pedidos_erro": pedidos_erro,
-            "faturamento_centavos": faturamento_centavos,
-            "faturamento_reais_str": centavos_to_reais_str(faturamento_centavos),
-            "ticket_medio_centavos": ticket_medio,
-        })
+        return Response(
+            {
+                "period": period,
+                "range": {
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                },
+                "pedidos_total": pedidos_total,
+                "pedidos_pagos": pedidos_pagos,
+                "pedidos_enviadas": pedidos_enviadas,
+                "pedidos_erro": pedidos_erro,
+                "faturamento_centavos": faturamento_centavos,
+                "faturamento_reais_str": centavos_to_reais_str(faturamento_centavos),
+                "ticket_medio_centavos": ticket_medio,
+            }
+        )
 
 
 class DistributionMetricsView(AdminAPIView):
@@ -169,16 +177,18 @@ Retorna distribuição de pedidos por plano e canal, além de alertas de erro.
             )
 
         # Query base (apenas pagos)
-        pedidos = Pedido.objects.filter(
-            created_at__range=(start, end)
-        ).exclude(status=PedidoStatus.AGUARDANDO_PAGAMENTO)
+        pedidos = Pedido.objects.filter(created_at__range=(start, end)).exclude(
+            status=PedidoStatus.AGUARDANDO_PAGAMENTO
+        )
 
         total = pedidos.count()
 
         # Distribuição por plano
-        dist_plano = pedidos.values(
-            "plano__nome", "plano__valor_centavos"
-        ).annotate(count=Count("id")).order_by("-count")
+        dist_plano = (
+            pedidos.values("plano__nome", "plano__valor_centavos")
+            .annotate(count=Count("id"))
+            .order_by("-count")
+        )
 
         distribuicao_por_plano = [
             {
@@ -198,9 +208,13 @@ Retorna distribuição de pedidos por plano e canal, além de alertas de erro.
         ]
 
         # Alertas (pedidos com erro ou aguardando reenvio)
-        alertas = Pedido.objects.filter(
-            status__in=[PedidoStatus.ERRO, PedidoStatus.AGUARDANDO_REENVIO]
-        ).select_related("plano").order_by("-created_at")[:20]
+        alertas = (
+            Pedido.objects.filter(
+                status__in=[PedidoStatus.ERRO, PedidoStatus.AGUARDANDO_REENVIO]
+            )
+            .select_related("plano")
+            .order_by("-created_at")[:20]
+        )
 
         alertas_erro = [
             {
@@ -214,8 +228,10 @@ Retorna distribuição de pedidos por plano e canal, além de alertas de erro.
             for p in alertas
         ]
 
-        return Response({
-            "distribuicao_por_plano": distribuicao_por_plano,
-            "distribuicao_por_canal": distribuicao_por_canal,
-            "alertas_erro": alertas_erro,
-        })
+        return Response(
+            {
+                "distribuicao_por_plano": distribuicao_por_plano,
+                "distribuicao_por_canal": distribuicao_por_canal,
+                "alertas_erro": alertas_erro,
+            }
+        )
