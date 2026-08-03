@@ -162,6 +162,14 @@ MIDDLEWARE = [
 # https://github.com/adamchainz/django-cors-headers
 CORS_ALLOWED_ORIGINS = env.list("DJANGO_CORS_ALLOWED_ORIGINS", default=[])
 
+# CSRF
+# ------------------------------------------------------------------------------
+# https://docs.djangoproject.com/en/dev/ref/settings/#csrf-trusted-origins
+# Necessário a partir do momento em que a SPA chama a API por caminho relativo
+# (rewrite de `/api/*` no vercel.json): o Django passa a receber requisições
+# cujo Origin/Referer é o domínio público, não a origem da API.
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
+
 # STATIC
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#static-root

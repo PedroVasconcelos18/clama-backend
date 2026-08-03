@@ -82,8 +82,16 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # CORS
 # ------------------------------------------------------------------------------
 # Em desenvolvimento, permite localhost:5173 (Vite)
+# Com o proxy de `/api` no dev server do Vite, o navegador não faz mais chamada
+# cross-origin — estas entradas cobrem apenas o caminho de depuração em que
+# `VITE_API_URL` volta a apontar direto para o backend.
 CORS_ALLOWED_ORIGINS = env.list(
     "DJANGO_CORS_ALLOWED_ORIGINS",
+    default=["http://localhost:5173", "http://127.0.0.1:5173"],
+)
+
+CSRF_TRUSTED_ORIGINS = env.list(
+    "DJANGO_CSRF_TRUSTED_ORIGINS",
     default=["http://localhost:5173", "http://127.0.0.1:5173"],
 )
 

@@ -36,6 +36,14 @@ SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=True)
 SESSION_COOKIE_SECURE = True
 # https://docs.djangoproject.com/en/dev/ref/settings/#csrf-cookie-secure
 CSRF_COOKIE_SECURE = True
+# https://docs.djangoproject.com/en/dev/ref/settings/#csrf-trusted-origins
+# Com o rewrite de `/api/*` no vercel.json, o navegador chama a API a partir do
+# domínio público — o Origin/Referer que o Django recebe é `https://clama.me`,
+# não a origem da API. Sem esta lista, toda escrita passa a ser rejeitada por CSRF.
+CSRF_TRUSTED_ORIGINS = env.list(
+    "DJANGO_CSRF_TRUSTED_ORIGINS",
+    default=["https://clama.me", "https://www.clama.me"],
+)
 # https://docs.djangoproject.com/en/dev/topics/security/#ssl-https
 # https://docs.djangoproject.com/en/dev/ref/settings/#secure-hsts-seconds
 SECURE_HSTS_SECONDS = 60
