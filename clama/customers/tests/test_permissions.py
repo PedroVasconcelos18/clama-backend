@@ -4,11 +4,11 @@ Testes de `IsCustomerPasswordCurrent` em [clama/core/permissions.py](../../core/
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.urls import path
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
-from django.urls import path
 
 from clama.core.permissions import IsCustomerPasswordCurrent
 

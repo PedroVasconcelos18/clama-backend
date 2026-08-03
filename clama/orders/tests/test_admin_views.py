@@ -1,6 +1,7 @@
 """
 Testes para views admin de pedidos.
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -93,11 +94,12 @@ class TestAdminPedidoReenviar:
         )
 
         url = reverse("admin_api:pedidos-reenviar", kwargs={"id": pedido.id})
-        with patch(
-            "clama.notifications.tasks.enviar_oracao_task.delay"
-        ) as mock_enviar, patch(
-            "clama.prayer_generation.tasks.gerar_oracao_task.delay"
-        ) as mock_gerar:
+        with (
+            patch("clama.notifications.tasks.enviar_oracao_task.delay") as mock_enviar,
+            patch(
+                "clama.prayer_generation.tasks.gerar_oracao_task.delay"
+            ) as mock_gerar,
+        ):
             response = api_client.post(url)
 
         assert response.status_code == status.HTTP_200_OK
@@ -189,9 +191,7 @@ class TestAdminPedidoMarcarGratuito:
     def test_pedido_inexistente_retorna_404(self, api_client):
         import uuid
 
-        url = reverse(
-            "admin_api:pedidos-marcar-gratuito", kwargs={"id": uuid.uuid4()}
-        )
+        url = reverse("admin_api:pedidos-marcar-gratuito", kwargs={"id": uuid.uuid4()})
         response = api_client.post(url)
         assert response.status_code == status.HTTP_404_NOT_FOUND
 

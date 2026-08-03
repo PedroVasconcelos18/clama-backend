@@ -365,7 +365,11 @@ CELERY_TASK_SEND_SENT_EVENT = True
 # django-rest-framework - https://www.django-rest-framework.org/api-guide/settings/
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # ADR-01: o token vive em cookie HttpOnly com escopo Path=/api, não no
+        # header Authorization. `SessionAuthentication` permanece na cadeia — é
+        # ela que faz o DRF rodar enforcement de CSRF nas views que não
+        # sobrescrevem `authentication_classes`.
+        "clama.core.authentication.CookieJWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.AllowAny",),
@@ -416,7 +420,9 @@ REST_FRAMEWORK = {
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=24),
+    # 15 min + refresh rotativo (ADR-01). Access curto reduz a janela de uso
+    # de um token vazado; a rotação torna o refresh de uso único.
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -424,6 +430,25 @@ SIMPLE_JWT = {
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
 }
+
+# Cookies de autenticação (ADR-01)
+# -------------------------------------------------------------------------------
+# `Path=/api` é o que impede o servidor WordPress de receber a credencial: o
+# navegador não envia o cookie em requisições a `/blog/*`. Depende de a API ser
+# same-origin — ver o rewrite de `/api/*` no vercel.json.
+# Todo endpoint autenticado precisa viver sob esse prefixo; endpoint autenticado
+# novo fora dele é bug de segurança, não de roteamento.
+AUTH_COOKIE_ACCESS = "clama_access"
+AUTH_COOKIE_REFRESH = "clama_refresh"
+AUTH_COOKIE_PATH = "/api"
+AUTH_COOKIE_HTTPONLY = True
+AUTH_COOKIE_SAMESITE = "Lax"
+# Sobrescrito para True em production.py. Em local/test fica False porque
+# cookie `Secure` não é gravado em http://localhost.
+AUTH_COOKIE_SECURE = False
+
+# Necessário para o navegador enviar e aceitar os cookies de autenticação.
+CORS_ALLOW_CREDENTIALS = True
 
 # drf-spectacular
 # -------------------------------------------------------------------------------

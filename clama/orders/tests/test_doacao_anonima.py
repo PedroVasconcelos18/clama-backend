@@ -14,6 +14,7 @@ Espelha o padrão de mock do Turnstile dos testes do freemium
 (`clama/freemium/tests/`): o `TurnstileClient.validate` é patchado no
 namespace da view de orders.
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -112,18 +113,14 @@ class TestDoacaoAnonimaHappy:
 
 @pytest.mark.django_db
 class TestDoacaoAnonimaValidacao:
-    def test_valor_abaixo_de_100_retorna_400(
-        self, api_client, plano_ativo, valid_data
-    ):
+    def test_valor_abaixo_de_100_retorna_400(self, api_client, plano_ativo, valid_data):
         valid_data["valor_centavos"] = 50
         url = reverse("doacao-anonima-create")
         response = api_client.post(url, valid_data, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert not Pedido.objects.exists()
 
-    def test_consent_ausente_retorna_400(
-        self, api_client, plano_ativo, valid_data
-    ):
+    def test_consent_ausente_retorna_400(self, api_client, plano_ativo, valid_data):
         valid_data["consent_aceito"] = False
         url = reverse("doacao-anonima-create")
         response = api_client.post(url, valid_data, format="json")
@@ -137,9 +134,7 @@ class TestDoacaoAnonimaValidacao:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert not Pedido.objects.exists()
 
-    def test_email_descartavel_retorna_400(
-        self, api_client, plano_ativo, valid_data
-    ):
+    def test_email_descartavel_retorna_400(self, api_client, plano_ativo, valid_data):
         valid_data["email"] = "user@mailinator.com"
         url = reverse("doacao-anonima-create")
         response = api_client.post(url, valid_data, format="json")
@@ -160,18 +155,14 @@ class TestDoacaoAnonimaTurnstile:
         # Nada persistido — Turnstile é validado antes de qualquer escrita.
         assert not Pedido.objects.exists()
 
-    def test_turnstile_ausente_retorna_400(
-        self, api_client, plano_ativo, valid_data
-    ):
+    def test_turnstile_ausente_retorna_400(self, api_client, plano_ativo, valid_data):
         valid_data.pop("turnstile_token")
         url = reverse("doacao-anonima-create")
         response = api_client.post(url, valid_data, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert not Pedido.objects.exists()
 
-    def test_turnstile_vazio_retorna_400(
-        self, api_client, plano_ativo, valid_data
-    ):
+    def test_turnstile_vazio_retorna_400(self, api_client, plano_ativo, valid_data):
         valid_data["turnstile_token"] = ""
         url = reverse("doacao-anonima-create")
         response = api_client.post(url, valid_data, format="json")
@@ -199,9 +190,7 @@ class TestDoacaoAnonimaInstituicao:
         pedido = Pedido.objects.get(id=response.data["id"])
         assert pedido.instituicao_id is None
 
-    def test_instituicao_inativa_retorna_400(
-        self, api_client, plano_ativo, valid_data
-    ):
+    def test_instituicao_inativa_retorna_400(self, api_client, plano_ativo, valid_data):
         """Instituição inativa não está no queryset (ativo=True) → 400."""
         instituicao = InstituicaoFactory(ativo=False)
         valid_data["instituicao"] = str(instituicao.id)

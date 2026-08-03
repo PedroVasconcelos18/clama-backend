@@ -32,9 +32,7 @@ User = get_user_model()
 # Migrations com prefixo numérico ("0004_...") não podem ser carregadas via
 # `import x.y.0004_z`; usamos `importlib.import_module` com o nome
 # qualificado em string.
-MIGRATION_MODULE_NAME = (
-    "clama_backend.users.migrations.0004_freemium_used_at"
-)
+MIGRATION_MODULE_NAME = "clama_backend.users.migrations.0004_freemium_used_at"
 
 
 @pytest.fixture
@@ -124,9 +122,7 @@ class TestBackfillFreemiumUsedAt:
         # Pega o mais antigo dos dois.
         assert abs((user.freemium_used_at - ts_antigo).total_seconds()) < 1
 
-    def test_user_sem_pedido_gratuito_permanece_null(
-        self, plano, migration, fake_apps
-    ):
+    def test_user_sem_pedido_gratuito_permanece_null(self, plano, migration, fake_apps):
         user = User.objects.create_user(
             email="sopagamento@example.com",
             password="SenhaForte!#999",

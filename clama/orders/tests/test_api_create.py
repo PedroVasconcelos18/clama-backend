@@ -8,6 +8,7 @@ regra de auth, o fixture `auth_customer` força um user autenticado em
 todos os tests deste módulo. Cenários de paywall propriamente ditos
 (401 anônimo, 403 force_change_password) ficam em test_paywall.py.
 """
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -378,8 +379,8 @@ class TestPedidoCreateRateLimit:
                 assert response.status_code in [
                     status.HTTP_201_CREATED,
                     status.HTTP_400_BAD_REQUEST,
-                ], f"Request {i+1} retornou {response.status_code} inesperado"
+                ], f"Request {i + 1} retornou {response.status_code} inesperado"
             else:
-                assert (
-                    response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
-                ), f"Request {i+1} deveria ser bloqueada, mas retornou {response.status_code}"
+                assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS, (
+                    f"Request {i + 1} deveria ser bloqueada, mas retornou {response.status_code}"
+                )

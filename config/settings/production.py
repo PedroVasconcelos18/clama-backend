@@ -11,7 +11,10 @@ from .base import env
 # https://docs.djangoproject.com/en/dev/ref/settings/#secret-key
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 # https://docs.djangoproject.com/en/dev/ref/settings/#allowed-hosts
-ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["clama.com.br"])
+ALLOWED_HOSTS = env.list(
+    "DJANGO_ALLOWED_HOSTS",
+    default=["clama.me", "www.clama.me", "api.clama.me"],
+)
 
 # DATABASES
 # ------------------------------------------------------------------------------
@@ -36,6 +39,8 @@ SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=True)
 SESSION_COOKIE_SECURE = True
 # https://docs.djangoproject.com/en/dev/ref/settings/#csrf-cookie-secure
 CSRF_COOKIE_SECURE = True
+# Cookies de autenticação (ADR-01) só trafegam em HTTPS em produção.
+AUTH_COOKIE_SECURE = True
 # https://docs.djangoproject.com/en/dev/ref/settings/#csrf-trusted-origins
 # Com o rewrite de `/api/*` no vercel.json, o navegador chama a API a partir do
 # domínio público — o Origin/Referer que o Django recebe é `https://clama.me`,

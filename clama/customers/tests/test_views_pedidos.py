@@ -103,11 +103,10 @@ class TestCustomerPedidosList:
         results = body if isinstance(body, list) else body.get("results", [])
         assert results == []
 
-    def test_pedidos_ordenados_mais_recente_primeiro(
-        self, plano, customer_alice
-    ):
-        from django.utils import timezone
+    def test_pedidos_ordenados_mais_recente_primeiro(self, plano, customer_alice):
         from datetime import timedelta
+
+        from django.utils import timezone
 
         p_antigo = _criar_pedido(customer_alice, plano)
         # Mexe direto no DB pra simular pedido antigo (created_at é auto_now_add)
@@ -134,15 +133,26 @@ class TestCustomerPedidosList:
 
         # Campos esperados
         for k in [
-            "id", "status", "plano", "valor_reais_str", "valor_centavos",
-            "eh_gratuito", "canal_entrega", "created_at", "oracao_gerada",
+            "id",
+            "status",
+            "plano",
+            "valor_reais_str",
+            "valor_centavos",
+            "eh_gratuito",
+            "canal_entrega",
+            "created_at",
+            "oracao_gerada",
         ]:
             assert k in item, f"campo {k} ausente"
 
         # Campos perigosos NÃO devem aparecer
         for k in [
-            "cpf_cnpj", "telefone", "consent_ip", "provider_payment_id",
-            "provider_checkout_url", "device_hash",
+            "cpf_cnpj",
+            "telefone",
+            "consent_ip",
+            "provider_payment_id",
+            "provider_checkout_url",
+            "device_hash",
         ]:
             assert k not in item, f"campo sensível {k} vazado"
 
@@ -161,9 +171,7 @@ class TestCustomerPedidosList:
         results = body if isinstance(body, list) else body.get("results", [])
         assert results[0]["oracao_gerada"] is None
 
-    def test_oracao_gerada_visivel_quando_pedido_enviada(
-        self, plano, customer_alice
-    ):
+    def test_oracao_gerada_visivel_quando_pedido_enviada(self, plano, customer_alice):
         _criar_pedido(
             customer_alice,
             plano,
@@ -176,9 +184,7 @@ class TestCustomerPedidosList:
         results = body if isinstance(body, list) else body.get("results", [])
         assert results[0]["oracao_gerada"] == "oração entregue com paz"
 
-    def test_force_change_password_nao_bloqueia_listagem(
-        self, plano, customer_alice
-    ):
+    def test_force_change_password_nao_bloqueia_listagem(self, plano, customer_alice):
         """`/pedidos/` é read-only, segue acessível com force_change_password=True."""
         customer_alice.force_change_password = True
         customer_alice.save(update_fields=["force_change_password"])
@@ -196,8 +202,9 @@ class TestCustomerPedidosFiltroData:
     @pytest.fixture
     def pedidos_em_datas(self, plano, customer_alice):
         """Cria 3 pedidos em datas distintas (10, 20, 30 dias atrás)."""
-        from django.utils import timezone
         from datetime import timedelta
+
+        from django.utils import timezone
 
         agora = timezone.now()
         pedidos = []
@@ -214,44 +221,37 @@ class TestCustomerPedidosFiltroData:
         body = response.data
         return body if isinstance(body, list) else body.get("results", [])
 
-    def test_filtro_from_inclui_data_limite(
-        self, pedidos_em_datas, customer_alice
-    ):
-        from django.utils import timezone
+    def test_filtro_from_inclui_data_limite(self, pedidos_em_datas, customer_alice):
         from datetime import timedelta
+
+        from django.utils import timezone
 
         # `from` = 15 dias atrás → deve incluir o de 10 dias, excluir os
         # de 20 e 30 dias.
         from_date = (timezone.now() - timedelta(days=15)).date().isoformat()
         client = _auth(APIClient(), customer_alice)
-        resp = client.get(
-            reverse("customers:pedidos") + f"?from={from_date}"
-        )
+        resp = client.get(reverse("customers:pedidos") + f"?from={from_date}")
         assert resp.status_code == drf_status.HTTP_200_OK
         results = self._results(resp)
         assert len(results) == 1
 
-    def test_filtro_to_inclui_data_limite(
-        self, pedidos_em_datas, customer_alice
-    ):
-        from django.utils import timezone
+    def test_filtro_to_inclui_data_limite(self, pedidos_em_datas, customer_alice):
         from datetime import timedelta
+
+        from django.utils import timezone
 
         # `to` = 15 dias atrás → deve incluir os de 20 e 30, excluir o de 10.
         to_date = (timezone.now() - timedelta(days=15)).date().isoformat()
         client = _auth(APIClient(), customer_alice)
-        resp = client.get(
-            reverse("customers:pedidos") + f"?to={to_date}"
-        )
+        resp = client.get(reverse("customers:pedidos") + f"?to={to_date}")
         assert resp.status_code == drf_status.HTTP_200_OK
         results = self._results(resp)
         assert len(results) == 2
 
-    def test_filtro_from_e_to_combinados(
-        self, pedidos_em_datas, customer_alice
-    ):
-        from django.utils import timezone
+    def test_filtro_from_e_to_combinados(self, pedidos_em_datas, customer_alice):
         from datetime import timedelta
+
+        from django.utils import timezone
 
         agora = timezone.now()
         from_date = (agora - timedelta(days=25)).date().isoformat()

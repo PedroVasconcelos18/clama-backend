@@ -86,9 +86,7 @@ def _forgot(client, email):
 
 @pytest.mark.django_db
 class TestForgotPasswordHappyPath:
-    def test_email_cadastrado_gera_temp_e_envia_email(
-        self, api_client, customer
-    ):
+    def test_email_cadastrado_gera_temp_e_envia_email(self, api_client, customer):
         response = _forgot(api_client, customer.email)
 
         assert response.status_code == drf_status.HTTP_200_OK
@@ -113,9 +111,7 @@ class TestForgotPasswordHappyPath:
         # Extrai a senha temporária do corpo texto do e-mail.
         body = mail.outbox[0].body
         # Linha: "Senha temporária: XXXXXXXXXXXXXX"
-        linha = next(
-            l for l in body.splitlines() if "Senha temporária:" in l
-        )
+        linha = next(l for l in body.splitlines() if "Senha temporária:" in l)
         senha_temp = linha.split("Senha temporária:")[1].strip()
         assert len(senha_temp) == 14
 
@@ -152,17 +148,13 @@ class TestForgotPasswordHappyPath:
 
 @pytest.mark.django_db
 class TestForgotPasswordAntiEnumeration:
-    def test_email_inexistente_retorna_mesma_resposta_generica(
-        self, api_client
-    ):
+    def test_email_inexistente_retorna_mesma_resposta_generica(self, api_client):
         response = _forgot(api_client, "naoexiste@example.com")
         assert response.status_code == drf_status.HTTP_200_OK
         assert response.data["detail"] == MSG_CUSTOMER_FORGOT_PASSWORD_ENVIADO
         assert len(mail.outbox) == 0
 
-    def test_admin_nao_recebe_email_e_resposta_identica(
-        self, api_client, admin_user
-    ):
+    def test_admin_nao_recebe_email_e_resposta_identica(self, api_client, admin_user):
         response = _forgot(api_client, admin_user.email)
         assert response.status_code == drf_status.HTTP_200_OK
         assert response.data["detail"] == MSG_CUSTOMER_FORGOT_PASSWORD_ENVIADO

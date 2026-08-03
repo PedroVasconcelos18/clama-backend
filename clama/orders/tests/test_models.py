@@ -1,10 +1,11 @@
 """
 Testes para os models do app orders.
 """
+
 import pytest
 
 from clama.core.exceptions import PastoralAPIException
-from clama.orders.models import CanalEntrega, Pedido, PedidoStatus, Sexo
+from clama.orders.models import CanalEntrega, PedidoStatus, Sexo
 from clama.orders.tests.factories import PedidoFactory
 from clama.plans.tests.factories import PlanFactory
 

@@ -3,11 +3,11 @@ Testes dos endpoints `/api/customer/auth/*` e `/api/customer/me/`.
 """
 
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status as drf_status
 from rest_framework.test import APIClient
-from rest_framework_simplejwt.tokens import RefreshToken
 
 User = get_user_model()
 
@@ -61,13 +61,16 @@ def _login(client, email, password):
 
 @pytest.mark.django_db
 class TestCustomerLogin:
-    def test_login_credenciais_validas_retorna_tokens_e_user(
+    def test_login_credenciais_validas_retorna_cookies_e_user(
         self, api_client, customer
     ):
         response = _login(api_client, customer.email, CUSTOMER_PASSWORD)
         assert response.status_code == drf_status.HTTP_200_OK
-        assert "access" in response.data
-        assert "refresh" in response.data
+        # ADR-01: tokens vão para cookies HttpOnly; o corpo traz só o `user`.
+        assert settings.AUTH_COOKIE_ACCESS in response.cookies
+        assert settings.AUTH_COOKIE_REFRESH in response.cookies
+        assert "access" not in response.data
+        assert "refresh" not in response.data
         user = response.data["user"]
         assert user["email"] == customer.email
         assert user["nome_completo"] == "Maria Silva"
@@ -108,98 +111,66 @@ class TestCustomerRefresh:
     def test_refresh_valido_retorna_novo_access_e_blacklist_antigo(
         self, api_client, customer
     ):
-        login_resp = _login(api_client, customer.email, CUSTOMER_PASSWORD)
-        refresh = login_resp.data["refresh"]
+        _login(api_client, customer.email, CUSTOMER_PASSWORD)
+        refresh_antigo = api_client.cookies[settings.AUTH_COOKIE_REFRESH].value
 
-        resp = api_client.post(
-            reverse("customers:refresh"),
-            {"refresh": refresh},
-            format="json",
-        )
+        resp = api_client.post(reverse("customers:refresh"), {}, format="json")
         assert resp.status_code == drf_status.HTTP_200_OK
-        assert "access" in resp.data
+        assert settings.AUTH_COOKIE_ACCESS in resp.cookies
         # ROTATE_REFRESH_TOKENS=True — vem refresh novo.
-        assert "refresh" in resp.data
-        assert resp.data["refresh"] != refresh
+        assert settings.AUTH_COOKIE_REFRESH in resp.cookies
+        assert resp.cookies[settings.AUTH_COOKIE_REFRESH].value != refresh_antigo
 
         # Refresh antigo deve estar blacklisted (BLACKLIST_AFTER_ROTATION).
-        resp2 = api_client.post(
-            reverse("customers:refresh"),
-            {"refresh": refresh},
-            format="json",
-        )
+        api_client.cookies[settings.AUTH_COOKIE_REFRESH] = refresh_antigo
+        resp2 = api_client.post(reverse("customers:refresh"), {}, format="json")
         assert resp2.status_code == drf_status.HTTP_401_UNAUTHORIZED
 
 
 @pytest.mark.django_db
 class TestCustomerLogout:
-    def test_logout_idempotente_token_invalido(self, api_client, customer):
-        login_resp = _login(api_client, customer.email, CUSTOMER_PASSWORD)
-        access = login_resp.data["access"]
+    """
+    O logout responde 205 (não 200): `config/urls.py:39` inclui
+    `clama_backend.users.api.urls` antes de `:41`, então é a view de `users`
+    que atende estes caminhos. A implementação em `clama/customers/api/views.py`
+    é código morto — ver o relatório de auditoria da Story 1.1.
+    """
 
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
-
-        # Refresh inválido — ainda 200.
-        resp = api_client.post(
-            reverse("customers:logout"),
-            {"refresh": "lixo-invalido"},
-            format="json",
-        )
-        assert resp.status_code == drf_status.HTTP_200_OK
-
-    def test_logout_idempotente_sem_refresh_no_body(self, api_client, customer):
-        login_resp = _login(api_client, customer.email, CUSTOMER_PASSWORD)
-        access = login_resp.data["access"]
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+    def test_logout_sem_cookie_e_idempotente(self, api_client, customer):
+        _login(api_client, customer.email, CUSTOMER_PASSWORD)
+        del api_client.cookies[settings.AUTH_COOKIE_REFRESH]
 
         resp = api_client.post(reverse("customers:logout"), {}, format="json")
-        assert resp.status_code == drf_status.HTTP_200_OK
+        assert resp.status_code == drf_status.HTTP_205_RESET_CONTENT
 
-    def test_logout_token_valido_blacklist_e_revoga_refresh(
-        self, api_client, customer
-    ):
-        login_resp = _login(api_client, customer.email, CUSTOMER_PASSWORD)
-        access = login_resp.data["access"]
-        refresh = login_resp.data["refresh"]
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+    def test_logout_revoga_o_refresh(self, api_client, customer):
+        _login(api_client, customer.email, CUSTOMER_PASSWORD)
+        refresh = api_client.cookies[settings.AUTH_COOKIE_REFRESH].value
 
-        resp = api_client.post(
-            reverse("customers:logout"),
-            {"refresh": refresh},
-            format="json",
-        )
-        assert resp.status_code == drf_status.HTTP_200_OK
+        resp = api_client.post(reverse("customers:logout"), {}, format="json")
+        assert resp.status_code == drf_status.HTTP_205_RESET_CONTENT
 
-        # Tentar usar o refresh blacklisted falha.
-        resp2 = api_client.post(
-            reverse("customers:refresh"),
-            {"refresh": refresh},
-            format="json",
-        )
+        # O refresh blacklistado não renova mais, mesmo reinjetado no cookie.
+        api_client.cookies[settings.AUTH_COOKIE_REFRESH] = refresh
+        resp2 = api_client.post(reverse("customers:refresh"), {}, format="json")
         assert resp2.status_code == drf_status.HTTP_401_UNAUTHORIZED
 
-    def test_logout_idempotente_segunda_chamada_com_mesmo_refresh(
+    def test_logout_segunda_chamada_com_mesmo_refresh_e_idempotente(
         self, api_client, customer
     ):
-        """Segundo logout do mesmo refresh = 200 (já blacklistado)."""
-        login_resp = _login(api_client, customer.email, CUSTOMER_PASSWORD)
-        access = login_resp.data["access"]
-        refresh = login_resp.data["refresh"]
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, customer.email, CUSTOMER_PASSWORD)
+        access = api_client.cookies[settings.AUTH_COOKIE_ACCESS].value
+        refresh = api_client.cookies[settings.AUTH_COOKIE_REFRESH].value
 
-        # Primeira: blacklist.
-        api_client.post(
-            reverse("customers:logout"),
-            {"refresh": refresh},
-            format="json",
-        )
-        # Segunda: já blacklisted — ainda 200.
-        resp = api_client.post(
-            reverse("customers:logout"),
-            {"refresh": refresh},
-            format="json",
-        )
-        assert resp.status_code == drf_status.HTTP_200_OK
+        primeira = api_client.post(reverse("customers:logout"), {}, format="json")
+        assert primeira.status_code == drf_status.HTTP_205_RESET_CONTENT
+
+        # O logout limpou os dois cookies; reinjetamos para exercitar de fato o
+        # caminho de idempotência com o mesmo refresh já blacklistado.
+        api_client.cookies[settings.AUTH_COOKIE_ACCESS] = access
+        api_client.cookies[settings.AUTH_COOKIE_REFRESH] = refresh
+        segunda = api_client.post(reverse("customers:logout"), {}, format="json")
+        assert segunda.status_code == drf_status.HTTP_205_RESET_CONTENT
 
 
 @pytest.mark.django_db
@@ -209,8 +180,6 @@ class TestChangePassword:
     ):
         login_resp = _login(api_client, customer_force_change.email, TEMP_PASSWORD)
         assert login_resp.status_code == drf_status.HTTP_200_OK
-        access = login_resp.data["access"]
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
 
         resp = api_client.post(
             reverse("customers:change-password"),
@@ -226,12 +195,8 @@ class TestChangePassword:
         assert customer_force_change.force_change_password is False
         assert customer_force_change.check_password("Senha-Nova-XYZ-987!")
 
-    def test_change_password_senha_atual_errada_retorna_400(
-        self, api_client, customer
-    ):
-        login_resp = _login(api_client, customer.email, CUSTOMER_PASSWORD)
-        access = login_resp.data["access"]
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+    def test_change_password_senha_atual_errada_retorna_400(self, api_client, customer):
+        _login(api_client, customer.email, CUSTOMER_PASSWORD)
 
         resp = api_client.post(
             reverse("customers:change-password"),
@@ -243,9 +208,7 @@ class TestChangePassword:
     def test_change_password_nova_senha_aplica_password_validators(
         self, api_client, customer
     ):
-        login_resp = _login(api_client, customer.email, CUSTOMER_PASSWORD)
-        access = login_resp.data["access"]
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, customer.email, CUSTOMER_PASSWORD)
 
         resp = api_client.post(
             reverse("customers:change-password"),
@@ -270,9 +233,7 @@ class TestCustomerMe:
         assert resp.status_code == drf_status.HTTP_401_UNAUTHORIZED
 
     def test_me_autenticado_retorna_dados(self, api_client, customer):
-        login_resp = _login(api_client, customer.email, CUSTOMER_PASSWORD)
-        access = login_resp.data["access"]
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, customer.email, CUSTOMER_PASSWORD)
 
         resp = api_client.get(reverse("customers:me"))
         assert resp.status_code == drf_status.HTTP_200_OK
@@ -288,9 +249,7 @@ class TestCustomerMe:
         self, api_client, customer_force_change
     ):
         """`/me/` é deliberadamente isento de IsCustomerPasswordCurrent."""
-        login_resp = _login(api_client, customer_force_change.email, TEMP_PASSWORD)
-        access = login_resp.data["access"]
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, customer_force_change.email, TEMP_PASSWORD)
 
         resp = api_client.get(reverse("customers:me"))
         assert resp.status_code == drf_status.HTTP_200_OK

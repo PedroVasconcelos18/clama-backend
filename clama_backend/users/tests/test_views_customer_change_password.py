@@ -11,6 +11,7 @@ Testes do endpoint POST /api/customer/auth/change-password/ (G2.a).
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.urls import reverse
@@ -49,24 +50,22 @@ def _login(api_client, email, password):
         format="json",
     )
     assert response.status_code == status.HTTP_200_OK, response.data
-    return response.data["access"]
+    # ADR-01: os cookies de autenticação ficam no jar do client; nada a devolver.
+    return None
 
 
 @pytest.mark.django_db
 class TestChangePasswordHappyForceChange:
     """Cenário típico do G1: User criado pela saga com flag true."""
 
-    def test_aceita_temp_e_zera_flag(
-        self, api_client, url_change_password
-    ):
+    def test_aceita_temp_e_zera_flag(self, api_client, url_change_password):
         user = User.objects.create_user(
             email="bia@example.com",
             password="TempPwd!#999",
             nome_completo="Bia Souza",
             force_change_password=True,
         )
-        access = _login(api_client, "bia@example.com", "TempPwd!#999")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "bia@example.com", "TempPwd!#999")
 
         response = api_client.post(
             url_change_password,
@@ -91,8 +90,7 @@ class TestChangePasswordHappyFlagFalse:
             password="SenhaForte!123",
             nome_completo="Alice",
         )
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
 
         response = api_client.post(
             url_change_password,
@@ -110,9 +108,7 @@ class TestChangePasswordHappyFlagFalse:
 
 @pytest.mark.django_db
 class TestChangePasswordSenhaErrada:
-    def test_senha_atual_errada_retorna_400(
-        self, api_client, url_change_password
-    ):
+    def test_senha_atual_errada_retorna_400(self, api_client, url_change_password):
         """
         P-3: a verificação de `senha_atual` foi movida pra view (dentro do
         `transaction.atomic()` + `select_for_update`). Mantém o mesmo
@@ -122,8 +118,7 @@ class TestChangePasswordSenhaErrada:
             email="alice@example.com",
             password="SenhaForte!123",
         )
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
 
         response = api_client.post(
             url_change_password,
@@ -131,26 +126,20 @@ class TestChangePasswordSenhaErrada:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data.get("error", {}).get("code") == "senha_atual_invalida"
         assert (
-            response.data.get("error", {}).get("code") == "senha_atual_invalida"
-        )
-        assert (
-            "A senha atual está incorreta"
-            in response.data["error"]["pastoral_message"]
+            "A senha atual está incorreta" in response.data["error"]["pastoral_message"]
         )
 
 
 @pytest.mark.django_db
 class TestChangePasswordValidacaoNova:
-    def test_senha_nova_curta_retorna_400(
-        self, api_client, url_change_password
-    ):
+    def test_senha_nova_curta_retorna_400(self, api_client, url_change_password):
         User.objects.create_user(
             email="alice@example.com",
             password="SenhaForte!123",
         )
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
 
         response = api_client.post(
             url_change_password,
@@ -193,8 +182,7 @@ class TestChangePasswordTOCTOURace:
             email="alice@example.com",
             password="SenhaForte!123",
         )
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
 
         from django.db.models.query import QuerySet
 
@@ -214,8 +202,9 @@ class TestChangePasswordTOCTOURace:
             eventos.append("check_password")
             return original_cp(self, *args, **kwargs)
 
-        with patch.object(QuerySet, "select_for_update", _spy_sfu), patch.object(
-            UserModel, "check_password", _spy_cp
+        with (
+            patch.object(QuerySet, "select_for_update", _spy_sfu),
+            patch.object(UserModel, "check_password", _spy_cp),
         ):
             response = api_client.post(
                 url_change_password,
@@ -230,13 +219,10 @@ class TestChangePasswordTOCTOURace:
         # Filtramos só os eventos de interesse (pode haver outros calls).
         sfu_idx = eventos.index("select_for_update")
         cp_after_sfu = [
-            i
-            for i, e in enumerate(eventos)
-            if e == "check_password" and i > sfu_idx
+            i for i, e in enumerate(eventos) if e == "check_password" and i > sfu_idx
         ]
         assert cp_after_sfu, (
-            f"check_password deveria ocorrer APÓS select_for_update; "
-            f"eventos={eventos}"
+            f"check_password deveria ocorrer APÓS select_for_update; eventos={eventos}"
         )
 
 
@@ -250,35 +236,29 @@ class TestChangePasswordInvalidaRefreshTokens:
     """
 
     def test_refresh_de_sessao_paralela_eh_invalidado_apos_troca(
-        self, api_client, url_change_password
+        self, url_change_password
     ):
         User.objects.create_user(
             email="alice@example.com",
             password="SenhaForte!123",
         )
-        # Sessão 1: primeira login.
-        login1 = api_client.post(
-            reverse("users:customer-login"),
-            {"email": "alice@example.com", "password": "SenhaForte!123"},
-            format="json",
-        )
-        assert login1.status_code == status.HTTP_200_OK
-        access1 = login1.data["access"]
-        refresh1 = login1.data["refresh"]
+        # Duas sessões em clients separados — cada um com seu jar de cookies,
+        # simulando dispositivos distintos.
+        sessao1, sessao2 = APIClient(), APIClient()
+        for cliente in (sessao1, sessao2):
+            resp = cliente.post(
+                reverse("users:customer-login"),
+                {"email": "alice@example.com", "password": "SenhaForte!123"},
+                format="json",
+            )
+            assert resp.status_code == status.HTTP_200_OK
 
-        # Sessão 2: segunda login (outro dispositivo) — refresh diferente.
-        login2 = api_client.post(
-            reverse("users:customer-login"),
-            {"email": "alice@example.com", "password": "SenhaForte!123"},
-            format="json",
-        )
-        assert login2.status_code == status.HTTP_200_OK
-        refresh2 = login2.data["refresh"]
+        refresh1 = sessao1.cookies[settings.AUTH_COOKIE_REFRESH].value
+        refresh2 = sessao2.cookies[settings.AUTH_COOKIE_REFRESH].value
         assert refresh1 != refresh2
 
-        # Troca senha pela sessão 1.
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access1}")
-        response = api_client.post(
+        # Troca de senha pela sessão 1.
+        response = sessao1.post(
             url_change_password,
             {
                 "senha_atual": "SenhaForte!123",
@@ -288,22 +268,20 @@ class TestChangePasswordInvalidaRefreshTokens:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        # Sessão 2 tenta refresh — deve falhar (blacklisted).
-        api_client.credentials()
-        refresh_resp = api_client.post(
-            reverse("users:customer-refresh"),
-            {"refresh": refresh2},
-            format="json",
+        # A sessão 2 (dispositivo paralelo) não consegue mais renovar.
+        assert (
+            sessao2.post(
+                reverse("users:customer-refresh"), {}, format="json"
+            ).status_code
+            == status.HTTP_401_UNAUTHORIZED
         )
-        assert refresh_resp.status_code == status.HTTP_401_UNAUTHORIZED
-
-        # E sessão 1 também: o próprio refresh dela foi invalidado.
-        refresh_resp1 = api_client.post(
-            reverse("users:customer-refresh"),
-            {"refresh": refresh1},
-            format="json",
+        # E a própria sessão 1 também não — a troca invalida TODOS os refresh.
+        assert (
+            sessao1.post(
+                reverse("users:customer-refresh"), {}, format="json"
+            ).status_code
+            == status.HTTP_401_UNAUTHORIZED
         )
-        assert refresh_resp1.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 @pytest.mark.django_db
@@ -322,8 +300,7 @@ class TestChangePasswordAtomicSelectForUpdate:
             email="alice@example.com",
             password="SenhaForte!123",
         )
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
 
         from django.db.models.query import QuerySet
 

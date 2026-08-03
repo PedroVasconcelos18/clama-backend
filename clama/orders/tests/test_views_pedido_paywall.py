@@ -69,7 +69,8 @@ def _login(api_client, email, password):
         format="json",
     )
     assert response.status_code == status.HTTP_200_OK, response.data
-    return response.data["access"]
+    # ADR-01: os cookies de autenticação ficam no jar do client; nada a devolver.
+    return None
 
 
 @pytest.mark.django_db
@@ -91,8 +92,7 @@ class TestPaywallPedidos:
     def test_bearer_customer_recebe_201_e_seta_user(
         self, api_client, valid_pedido_data, customer_user
     ):
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
 
         url = reverse("pedido-create")
         response = api_client.post(url, valid_pedido_data, format="json")
@@ -115,8 +115,7 @@ class TestPaywallPedidos:
         Nota: o `pedidos_create` (ScopedRateThrottle por IP) é 10/min, então
         não bate antes — é o `EmailScopedThrottle` (5/hour) que deve barrar.
         """
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
         url = reverse("pedido-create")
 
         for i in range(5):
@@ -125,7 +124,7 @@ class TestPaywallPedidos:
             assert response.status_code in (
                 status.HTTP_201_CREATED,
                 status.HTTP_400_BAD_REQUEST,
-            ), f"req {i+1} retornou {response.status_code}: {response.data}"
+            ), f"req {i + 1} retornou {response.status_code}: {response.data}"
 
         # 6ª: throttle por user.email (alice@example.com) deve estourar.
         data = {**valid_pedido_data, "email": "variante5@example.com"}
@@ -144,8 +143,7 @@ class TestPaywallPedidos:
         outro = User.objects.create_user(
             email="other@example.com", password="SenhaForte!123"
         )
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
 
         spoofed = {**valid_pedido_data, "user": outro.id}
         url = reverse("pedido-create")

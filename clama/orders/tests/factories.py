@@ -1,6 +1,7 @@
 """
 Factories para testes do app orders.
 """
+
 import factory
 from factory.django import DjangoModelFactory
 

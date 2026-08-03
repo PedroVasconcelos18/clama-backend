@@ -18,9 +18,9 @@ Uso:
 
 from rest_framework.generics import GenericAPIView
 from rest_framework.views import APIView
-from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from clama.core.pastoral_messages import MSG_NOT_AUTHENTICATED, MSG_NO_PERMISSION
+from clama.core.authentication import CookieJWTAuthentication
+from clama.core.pastoral_messages import MSG_NO_PERMISSION, MSG_NOT_AUTHENTICATED
 from clama_backend.users.permissions import IsClamaAdmin
 
 
@@ -35,7 +35,10 @@ class AdminAPIView(APIView):
     401 quando não autenticado, 403 quando não é admin.
     """
 
-    authentication_classes = [JWTAuthentication]
+    # ADR-01: lê o token do cookie HttpOnly. `SessionAuthentication` continua
+    # deliberadamente FORA da lista — incluí-la ativaria CSRF do DRF nestas
+    # views e faria uma sessão do Django admin autorizar chamadas à API admin.
+    authentication_classes = [CookieJWTAuthentication]
     permission_classes = [IsClamaAdmin]
 
     def permission_denied(self, request, message=None, code=None):
@@ -62,7 +65,10 @@ class AdminGenericAPIView(GenericAPIView):
     Útil quando você precisa de funcionalidades como serializers, querysets, etc.
     """
 
-    authentication_classes = [JWTAuthentication]
+    # ADR-01: lê o token do cookie HttpOnly. `SessionAuthentication` continua
+    # deliberadamente FORA da lista — incluí-la ativaria CSRF do DRF nestas
+    # views e faria uma sessão do Django admin autorizar chamadas à API admin.
+    authentication_classes = [CookieJWTAuthentication]
     permission_classes = [IsClamaAdmin]
 
     def permission_denied(self, request, message=None, code=None):

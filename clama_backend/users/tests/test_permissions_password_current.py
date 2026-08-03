@@ -62,7 +62,8 @@ def _login(api_client, email, password):
         format="json",
     )
     assert response.status_code == status.HTTP_200_OK, response.data
-    return response.data["access"]
+    # ADR-01: os cookies de autenticação ficam no jar do client; nada a devolver.
+    return None
 
 
 @pytest.mark.django_db
@@ -75,17 +76,13 @@ class TestPedidosForcePasswordCurrent:
             password="TempPwd!#999",
             force_change_password=True,
         )
-        access = _login(api_client, "bia@example.com", "TempPwd!#999")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "bia@example.com", "TempPwd!#999")
 
         url = reverse("pedido-create")
         response = api_client.post(url, valid_pedido_data, format="json")
         assert response.status_code == status.HTTP_403_FORBIDDEN
         # Mensagem pastoral.
-        assert (
-            response.data.get("error", {}).get("code")
-            == "force_change_password"
-        )
+        assert response.data.get("error", {}).get("code") == "force_change_password"
         assert "Troque sua senha" in response.data["error"]["pastoral_message"]
 
     def test_user_com_flag_false_recebe_201_em_pedidos(
@@ -96,8 +93,7 @@ class TestPedidosForcePasswordCurrent:
             password="SenhaForte!123",
             force_change_password=False,
         )
-        access = _login(api_client, "alice@example.com", "SenhaForte!123")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "alice@example.com", "SenhaForte!123")
 
         url = reverse("pedido-create")
         response = api_client.post(url, valid_pedido_data, format="json")
@@ -114,8 +110,7 @@ class TestIsencoesIsCustomerPasswordCurrent:
             password="TempPwd!#999",
             force_change_password=True,
         )
-        access = _login(api_client, "bia@example.com", "TempPwd!#999")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "bia@example.com", "TempPwd!#999")
 
         response = api_client.post(
             reverse("users:customer-change-password"),
@@ -130,8 +125,7 @@ class TestIsencoesIsCustomerPasswordCurrent:
             password="TempPwd!#999",
             force_change_password=True,
         )
-        access = _login(api_client, "bia@example.com", "TempPwd!#999")
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, "bia@example.com", "TempPwd!#999")
 
         response = api_client.get(reverse("users:customer-me"))
         assert response.status_code == status.HTTP_200_OK

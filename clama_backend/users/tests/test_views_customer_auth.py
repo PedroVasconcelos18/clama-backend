@@ -7,6 +7,7 @@ Testes do conjunto Customer Auth (G2.a):
 """
 
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import override_settings
@@ -94,16 +95,17 @@ class TestCustomerLoginHappy:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
-        assert "access" in response.data
-        assert "refresh" in response.data
+        assert settings.AUTH_COOKIE_ACCESS in response.cookies
+        assert settings.AUTH_COOKIE_REFRESH in response.cookies
+        # ADR-01: token nunca no corpo — só o `user`, de que a SPA depende.
+        assert "access" not in response.data
+        assert "refresh" not in response.data
         assert response.data["user"]["email"] == "alice@example.com"
         assert response.data["user"]["force_change_password"] is False
         assert response.data["user"]["freemium_used_at"] is None
         assert response.data["user"]["nome_completo"] == "Alice Maria"
 
-    def test_login_email_case_insensitive(
-        self, api_client, url_login, customer_user
-    ):
+    def test_login_email_case_insensitive(self, api_client, url_login, customer_user):
         # `__iexact` deve permitir login com email em casing diferente.
         response = api_client.post(
             url_login,
@@ -139,9 +141,7 @@ class TestCustomerLoginAdminBlocked:
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         # Mensagem genérica idêntica a credenciais erradas (sem oracle de role).
-        assert (
-            response.data.get("error", {}).get("code") == "invalid_credentials"
-        )
+        assert response.data.get("error", {}).get("code") == "invalid_credentials"
 
 
 @pytest.mark.django_db
@@ -186,9 +186,7 @@ class TestCustomerLoginBadCreds:
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_senha_errada_retorna_401(
-        self, api_client, url_login, customer_user
-    ):
+    def test_senha_errada_retorna_401(self, api_client, url_login, customer_user):
         response = api_client.post(
             url_login,
             {"email": "alice@example.com", "password": "errada-mesmo"},
@@ -232,7 +230,7 @@ class TestCustomerLoginRateLimit:
             assert response.status_code in (
                 status.HTTP_200_OK,
                 status.HTTP_401_UNAUTHORIZED,
-            ), f"req {i+1} retornou {response.status_code}"
+            ), f"req {i + 1} retornou {response.status_code}"
         # Sexta tentativa cai no 429.
         response = api_client.post(
             url_login,
@@ -247,14 +245,21 @@ class TestCustomerLoginRateLimit:
 # ---------------------------------------------------------------------------
 
 
-def _login_e_pega_tokens(api_client, url_login, email, password):
+def _login(api_client, url_login, email, password):
+    """
+    Loga e deixa os cookies de autenticação no jar do client.
+
+    ADR-01: os tokens não voltam mais no corpo — o `APIClient` persiste os
+    cookies da resposta, então as requisições seguintes já vão autenticadas.
+    Devolve o refresh cru para os casos que precisam manipular o cookie.
+    """
     response = api_client.post(
         url_login,
         {"email": email, "password": password},
         format="json",
     )
     assert response.status_code == status.HTTP_200_OK
-    return response.data["access"], response.data["refresh"]
+    return response.cookies[settings.AUTH_COOKIE_REFRESH].value
 
 
 @pytest.mark.django_db
@@ -262,31 +267,20 @@ class TestCustomerRefresh:
     def test_refresh_happy_retorna_novo_access(
         self, api_client, url_login, url_refresh, customer_user
     ):
-        _, refresh = _login_e_pega_tokens(
-            api_client, url_login, "alice@example.com", "SenhaForte!123"
-        )
-        response = api_client.post(
-            url_refresh, {"refresh": refresh}, format="json"
-        )
+        _login(api_client, url_login, "alice@example.com", "SenhaForte!123")
+        response = api_client.post(url_refresh, {}, format="json")
         assert response.status_code == status.HTTP_200_OK
-        assert "access" in response.data
+        assert settings.AUTH_COOKIE_ACCESS in response.cookies
 
     def test_refresh_apos_logout_retorna_401_blacklisted(
         self, api_client, url_login, url_refresh, url_logout, customer_user
     ):
-        access, refresh = _login_e_pega_tokens(
-            api_client, url_login, "alice@example.com", "SenhaForte!123"
-        )
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
-        logout_resp = api_client.post(
-            url_logout, {"refresh": refresh}, format="json"
-        )
+        _login(api_client, url_login, "alice@example.com", "SenhaForte!123")
+        logout_resp = api_client.post(url_logout, {}, format="json")
         assert logout_resp.status_code == status.HTTP_205_RESET_CONTENT
 
         api_client.credentials()  # limpa Authorization
-        response = api_client.post(
-            url_refresh, {"refresh": refresh}, format="json"
-        )
+        response = api_client.post(url_refresh, {}, format="json")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
@@ -300,24 +294,23 @@ class TestCustomerLogout:
     def test_logout_happy_retorna_205(
         self, api_client, url_login, url_logout, customer_user
     ):
-        access, refresh = _login_e_pega_tokens(
-            api_client, url_login, "alice@example.com", "SenhaForte!123"
-        )
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
-        response = api_client.post(
-            url_logout, {"refresh": refresh}, format="json"
-        )
+        _login(api_client, url_login, "alice@example.com", "SenhaForte!123")
+        response = api_client.post(url_logout, {}, format="json")
         assert response.status_code == status.HTTP_205_RESET_CONTENT
 
-    def test_logout_sem_refresh_retorna_400(
+    def test_logout_sem_cookie_de_refresh_retorna_205(
         self, api_client, url_login, url_logout, customer_user
     ):
-        access, _ = _login_e_pega_tokens(
-            api_client, url_login, "alice@example.com", "SenhaForte!123"
-        )
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        """
+        ADR-01 mudou este contrato. Antes o refresh vinha no corpo e a ausência
+        era erro do cliente (400). Agora vem do cookie: não haver cookie
+        significa que não há sessão a encerrar — o objetivo do logout já está
+        cumprido, então 205, coerente com a idempotência do resto do fluxo.
+        """
+        _login(api_client, url_login, "alice@example.com", "SenhaForte!123")
+        del api_client.cookies[settings.AUTH_COOKIE_REFRESH]
         response = api_client.post(url_logout, {}, format="json")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_205_RESET_CONTENT
 
     def test_logout_idempotente_para_refresh_ja_blacklisted(
         self, api_client, url_login, url_logout, customer_user
@@ -328,62 +321,52 @@ class TestCustomerLogout:
         205 — porque o objetivo (sessão revogada) já está cumprido. Frontend
         pode chamar logout em retry sem receber 401 espúrio.
         """
-        access, refresh = _login_e_pega_tokens(
-            api_client, url_login, "alice@example.com", "SenhaForte!123"
-        )
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        refresh = _login(api_client, url_login, "alice@example.com", "SenhaForte!123")
+        access = api_client.cookies[settings.AUTH_COOKIE_ACCESS].value
         # Primeiro logout: 205.
-        first = api_client.post(
-            url_logout, {"refresh": refresh}, format="json"
-        )
+        first = api_client.post(url_logout, {}, format="json")
         assert first.status_code == status.HTTP_205_RESET_CONTENT
-        # Segundo logout com mesmo refresh: também 205 (idempotente).
-        second = api_client.post(
-            url_logout, {"refresh": refresh}, format="json"
-        )
+        # O logout limpou AMBOS os cookies. Reinjetamos os dois: o access para
+        # a requisição passar por `IsAuthenticated`, e o mesmo refresh (agora
+        # blacklistado) para exercitar de fato o caminho de idempotência.
+        api_client.cookies[settings.AUTH_COOKIE_ACCESS] = access
+        api_client.cookies[settings.AUTH_COOKIE_REFRESH] = refresh
+        second = api_client.post(url_logout, {}, format="json")
         assert second.status_code == status.HTTP_205_RESET_CONTENT
 
     def test_logout_com_refresh_de_outro_user_retorna_400(
         self, api_client, url_login, url_logout, customer_user
     ):
         """
-        P-4: cross-user DoS. Se Alice loga e tenta blacklistar o refresh de
-        Bob, recebe 400 genérico (sem revelar dono do token) e o refresh do
-        Bob continua válido — verificamos via /refresh/ depois.
+        P-4: cross-user DoS. Se Alice injeta o refresh do Bob no próprio cookie
+        e tenta blacklistá-lo, recebe 400 genérico (sem revelar dono do token)
+        e o refresh do Bob continua válido — verificado via /refresh/ depois.
         """
-        # User B ("bob"): obtém um refresh válido próprio.
+        # Bob obtém um refresh próprio, em client separado para não misturar os
+        # jars de cookie.
         bob = User.objects.create_user(
             email="bob@example.com",
             password="SenhaForte!#999",
             nome_completo="Bob",
         )
-        bob_refresh = _login_e_pega_tokens(
-            api_client, url_login, "bob@example.com", "SenhaForte!#999"
-        )[1]
+        client_bob = APIClient()
+        bob_refresh = _login(
+            client_bob, url_login, "bob@example.com", "SenhaForte!#999"
+        )
 
-        # User A ("alice"): loga e tenta blacklistar refresh de Bob.
-        alice_access, _ = _login_e_pega_tokens(
-            api_client, url_login, "alice@example.com", "SenhaForte!123"
-        )
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {alice_access}")
-        response = api_client.post(
-            url_logout, {"refresh": bob_refresh}, format="json"
-        )
+        # Alice loga e substitui o próprio cookie de refresh pelo do Bob.
+        _login(api_client, url_login, "alice@example.com", "SenhaForte!123")
+        api_client.cookies[settings.AUTH_COOKIE_REFRESH] = bob_refresh
+        response = api_client.post(url_logout, {}, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert (
-            response.data.get("error", {}).get("code") == "refresh_invalid"
-        )
+        assert response.data.get("error", {}).get("code") == "refresh_invalid"
 
-        # Refresh do Bob ainda funciona (não foi blacklistado pelo logout de Alice).
-        api_client.credentials()  # limpa Authorization
-        refresh_resp = api_client.post(
-            reverse("users:customer-refresh"),
-            {"refresh": bob_refresh},
-            format="json",
+        # O refresh do Bob continua válido — o logout da Alice não o blacklistou.
+        refresh_resp = client_bob.post(
+            reverse("users:customer-refresh"), {}, format="json"
         )
         assert refresh_resp.status_code == status.HTTP_200_OK
-        assert "access" in refresh_resp.data
-        # Sanity: usamos `bob` para evitar lint do unused fixture.
+        assert settings.AUTH_COOKIE_ACCESS in refresh_resp.cookies
         assert bob.email == "bob@example.com"
 
 
@@ -401,10 +384,7 @@ class TestCustomerMe:
     def test_me_com_flag_false_retorna_200(
         self, api_client, url_login, url_me, customer_user
     ):
-        access, _ = _login_e_pega_tokens(
-            api_client, url_login, "alice@example.com", "SenhaForte!123"
-        )
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, url_login, "alice@example.com", "SenhaForte!123")
         response = api_client.get(url_me)
         assert response.status_code == status.HTTP_200_OK
         assert response.data["email"] == "alice@example.com"
@@ -415,10 +395,7 @@ class TestCustomerMe:
     ):
         """`/me/` é isento de IsCustomerPasswordCurrent — frontend precisa
         ler a flag para decidir o redirect."""
-        access, _ = _login_e_pega_tokens(
-            api_client, url_login, "bia@example.com", "TempPwd!#999"
-        )
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        _login(api_client, url_login, "bia@example.com", "TempPwd!#999")
         response = api_client.get(url_me)
         assert response.status_code == status.HTTP_200_OK
         assert response.data["force_change_password"] is True
@@ -439,5 +416,8 @@ class TestAdminLoginNaoFoiAfetado:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
-        assert "access" in response.data
-        assert "refresh" in response.data
+        assert settings.AUTH_COOKIE_ACCESS in response.cookies
+        assert settings.AUTH_COOKIE_REFRESH in response.cookies
+        # ADR-01: token nunca no corpo — só o `user`, de que a SPA depende.
+        assert "access" not in response.data
+        assert "refresh" not in response.data

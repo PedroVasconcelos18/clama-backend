@@ -53,9 +53,7 @@ class TestPedidoCreatePaywall:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert not Pedido.objects.exists()
 
-    def test_autenticado_force_change_password_retorna_403(
-        self, db, valid_payload
-    ):
+    def test_autenticado_force_change_password_retorna_403(self, db, valid_payload):
         user = User.objects.create_user(
             email="force@example.com",
             password="Temp-Pass-1234!",

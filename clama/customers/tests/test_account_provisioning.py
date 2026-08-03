@@ -7,6 +7,7 @@ corrida de e-mail duplicado (IntegrityError → vincula existente).
 
 ⚠️ Requerem DB/app-registry — rodam no ambiente provisionado.
 """
+
 from unittest.mock import patch
 
 import pytest

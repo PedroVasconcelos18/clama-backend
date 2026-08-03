@@ -2,6 +2,7 @@
 Views da API de autenticação admin e customer.
 """
 
+from django.conf import settings
 from django.db import transaction
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
@@ -17,6 +18,7 @@ from rest_framework_simplejwt.token_blacklist.models import (
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from clama.core.authentication import clear_auth_cookies, set_auth_cookies
 from clama.core.exceptions import PastoralAPIException
 from clama_backend.users.api.serializers import (
     AdminTokenObtainPairSerializer,
@@ -24,6 +26,16 @@ from clama_backend.users.api.serializers import (
     CustomerTokenObtainPairSerializer,
     CustomerUserSerializer,
 )
+
+
+class CustomerRefreshCookieAusenteError(PastoralAPIException):
+    """401 quando a requisição de refresh chega sem o cookie correspondente."""
+
+    status_code = 401
+    code = "refresh_cookie_ausente"
+    message = "Refresh cookie missing"
+    pastoral_message = "Sua sessão expirou. Faça login pra continuar."
+
 
 # ---------------------------------------------------------------------------
 # Admin
@@ -68,7 +80,12 @@ Autentica um admin do Clama e retorna tokens JWT.
         },
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        response = super().post(request, *args, **kwargs)
+        if response.status_code != status.HTTP_200_OK:
+            return response
+        access = response.data.pop("access", None)
+        refresh = response.data.pop("refresh", None)
+        return set_auth_cookies(response, access, refresh)
 
 
 class AdminTokenRefreshView(TokenRefreshView):
@@ -86,7 +103,16 @@ class AdminTokenRefreshView(TokenRefreshView):
         },
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        raw_refresh = request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)
+        if not raw_refresh:
+            raise CustomerRefreshCookieAusenteError()
+        request._full_data = {**request.data, "refresh": raw_refresh}
+        response = super().post(request, *args, **kwargs)
+        if response.status_code != status.HTTP_200_OK:
+            return response
+        access = response.data.pop("access", None)
+        refresh = response.data.pop("refresh", None)
+        return set_auth_cookies(response, access, refresh)
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +148,18 @@ class CustomerLoginView(TokenObtainPairView):
         },
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        response = super().post(request, *args, **kwargs)
+        if response.status_code != status.HTTP_200_OK:
+            return response
+        # ADR-01: tokens vão para cookies HttpOnly; o corpo mantém apenas `user`,
+        # de que a SPA depende para `isAuthenticated` e para os guards de rota.
+        access = response.data.pop("access", None)
+        refresh = response.data.pop("refresh", None)
+        return set_auth_cookies(response, access, refresh)
 
 
 class CustomerTokenRefreshView(TokenRefreshView):
-    """Renova access token customer usando refresh token."""
+    """Renova access token customer lendo o refresh do cookie."""
 
     @extend_schema(
         tags=["Customer / Auth"],
@@ -138,7 +171,18 @@ class CustomerTokenRefreshView(TokenRefreshView):
         },
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        raw_refresh = request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)
+        if not raw_refresh:
+            raise CustomerRefreshCookieAusenteError()
+        # O serializer do simplejwt espera o refresh no corpo; o cookie é a
+        # fonte agora, então injetamos antes de delegar.
+        request._full_data = {**request.data, "refresh": raw_refresh}
+        response = super().post(request, *args, **kwargs)
+        if response.status_code != status.HTTP_200_OK:
+            return response
+        access = response.data.pop("access", None)
+        refresh = response.data.pop("refresh", None)
+        return set_auth_cookies(response, access, refresh)
 
 
 class CustomerLogoutView(APIView):
@@ -177,22 +221,17 @@ class CustomerLogoutView(APIView):
                     "(refresh já era inválido/blacklisted)"
                 )
             ),
-            400: OpenApiResponse(description="Body sem refresh ou refresh de outro usuário"),
+            400: OpenApiResponse(
+                description="Body sem refresh ou refresh de outro usuário"
+            ),
         },
     )
     def post(self, request, *args, **kwargs):
-        refresh_str = (request.data or {}).get("refresh")
+        # ADR-01: o refresh vem do cookie. Sem cookie não há sessão a encerrar —
+        # o objetivo do logout já está cumprido, então 205 (idempotente), não 400.
+        refresh_str = request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)
         if not refresh_str:
-            return Response(
-                {
-                    "error": {
-                        "code": "refresh_required",
-                        "message": "Refresh token is required",
-                        "pastoral_message": "Não conseguimos efetuar o logout — refresh ausente.",
-                    }
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return clear_auth_cookies(Response(status=status.HTTP_205_RESET_CONTENT))
         # P-1B: idempotência. Tentamos decodar e validar o ownership ANTES
         # de blacklistar. Se o token decoda mas é de outro user (P-4), 400
         # genérico. Se NÃO decoda (já blacklisted, expirado, malformado),
@@ -202,12 +241,16 @@ class CustomerLogoutView(APIView):
             token = RefreshToken(refresh_str)
         except TokenError:
             # Token inválido ou já blacklisted — idempotente, retorna 205.
-            return Response(status=status.HTTP_205_RESET_CONTENT)
+            return clear_auth_cookies(Response(status=status.HTTP_205_RESET_CONTENT))
 
         # P-4: confere que o refresh pertence ao usuário autenticado.
         # Mensagem genérica pra evitar info leak sobre o dono do token.
+        # O simplejwt serializa `user_id` como string no claim (comportamento
+        # do 5.x); `request.user.pk` é int. Comparar direto dá sempre desigual,
+        # o que fazia o logout devolver 400 e NUNCA blacklistar — para todos os
+        # usuários. Comparamos como string dos dois lados.
         token_user_id = token.payload.get("user_id")
-        if token_user_id != request.user.pk:
+        if str(token_user_id) != str(request.user.pk):
             return Response(
                 {
                     "error": {
@@ -224,8 +267,8 @@ class CustomerLogoutView(APIView):
         except TokenError:
             # Race entre decode e blacklist (ex.: outra request blacklistou
             # entre a linha acima e esta). Mantém idempotência: 205.
-            return Response(status=status.HTTP_205_RESET_CONTENT)
-        return Response(status=status.HTTP_205_RESET_CONTENT)
+            return clear_auth_cookies(Response(status=status.HTTP_205_RESET_CONTENT))
+        return clear_auth_cookies(Response(status=status.HTTP_205_RESET_CONTENT))
 
 
 class CustomerChangePasswordView(APIView):

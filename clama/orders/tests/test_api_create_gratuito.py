@@ -5,6 +5,7 @@ Fluxo gratuito autenticado (card "Gratuito" em Minha Conta): cria o pedido
 já como `eh_gratuito=True`, em `GERANDO_ORACAO`, sem gateway de pagamento, e dispara a
 geração da oração via `transaction.on_commit`. Sem trava freemium.
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -65,7 +66,11 @@ def valid_data():
 @pytest.mark.django_db
 class TestPedidoCreateGratuito:
     def test_cria_gratuito_e_dispara_geracao(
-        self, api_client, customer_user, plano_gratuito, valid_data,
+        self,
+        api_client,
+        customer_user,
+        plano_gratuito,
+        valid_data,
         django_capture_on_commit_callbacks,
     ):
         url = reverse("pedido-create-gratuito")
@@ -107,7 +112,10 @@ class TestPedidoCreateGratuito:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_ignora_plano_e_valor_do_payload(
-        self, api_client, plano_gratuito, valid_data,
+        self,
+        api_client,
+        plano_gratuito,
+        valid_data,
         django_capture_on_commit_callbacks,
     ):
         """Mesmo que o cliente injete plano/valor, o backend força gratuito."""
