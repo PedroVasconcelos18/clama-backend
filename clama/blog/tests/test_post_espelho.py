@@ -12,6 +12,7 @@ from django.db.models import ProtectedError
 from clama.blog.models import (
     Comentario,
     PostEspelho,
+    RemocaoDeEspelhoProibida,
     PostEspelhoStatus,
     Reacao,
     ReacaoTipo,
@@ -91,14 +92,21 @@ class TestFksParalelas:
         assert espelho.comentarios.count() == 1
 
     def test_apagar_espelho_com_comentario_e_bloqueado(self):
-        # PROTECT, não CASCADE. O IP do comentário fica sob retenção de 6
-        # meses do Marco Civil — apagar em cascata seria perda de dado com
-        # obrigação legal atrás.
+        # Duas camadas, e o teste prova as duas separadamente.
+        #
+        # Camada 1 — o guarda do modelo (Story 3.4, AC7) dispara primeiro e
+        # nem chega ao banco.
         espelho = PostEspelhoFactory()
         ComentarioFactory(post_espelho=espelho)
 
-        with pytest.raises(ProtectedError):
+        with pytest.raises(RemocaoDeEspelhoProibida):
             espelho.delete()
+
+        # Camada 2 — mesmo furando o guarda, o `PROTECT` do banco segura. É o
+        # que preserva o IP sob a retenção de 6 meses do Marco Civil se alguém
+        # um dia remover a camada 1.
+        with pytest.raises(ProtectedError):
+            espelho._remover_de_verdade()
 
         assert PostEspelho.objects.filter(pk=espelho.pk).exists()
         assert Comentario.objects.count() == 1
@@ -107,8 +115,11 @@ class TestFksParalelas:
         espelho = PostEspelhoFactory()
         ReacaoFactory(post_espelho=espelho)
 
-        with pytest.raises(ProtectedError):
+        with pytest.raises(RemocaoDeEspelhoProibida):
             espelho.delete()
+
+        with pytest.raises(ProtectedError):
+            espelho._remover_de_verdade()
 
         assert Reacao.objects.count() == 1
 

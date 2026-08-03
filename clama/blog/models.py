@@ -5,6 +5,7 @@ from django.db import models
 from django.utils import timezone
 from encrypted_model_fields.fields import EncryptedCharField
 
+from clama.core.exceptions import ClamaBaseException
 from clama.core.models import TimestampedModel
 
 from .managers import PostManager
@@ -105,6 +106,41 @@ class PostEspelhoStatus(models.TextChoices):
     PENDENTE = "pendente", "Pendente de revisão"
 
 
+class RemocaoDeEspelhoProibida(ClamaBaseException):
+    """Tentativa de apagar linha do espelho (Story 3.4, AC7).
+
+    O espelho nunca apaga: post removido no WordPress vira `LIXEIRA`. Apagar
+    aqui derrubaria o `PROTECT` das FKs de `Comentario` e `Reacao` — ou, pior,
+    passaria por cima delas quando não houvesse comentário ainda, deixando o
+    espelho e o WordPress divergentes sem sinal nenhum.
+    """
+
+    code = "remocao_de_espelho_proibida"
+    message = "PostEspelho nunca é removido; mude o status para LIXEIRA."
+    pastoral_message = "Este registro não pode ser apagado."
+
+
+class PostEspelhoQuerySet(models.QuerySet):
+    """QuerySet que não apaga.
+
+    Bloquear só o `delete()` da instância deixaria
+    `PostEspelho.objects.filter(...).delete()` passar — e é justamente esse o
+    caminho que um script de limpeza usaria.
+    """
+
+    def delete(self):
+        raise RemocaoDeEspelhoProibida()
+
+    def _remover_de_verdade(self):
+        """Escotilha para correção de dado, fora do fluxo normal.
+
+        Existe porque um espelho criado por engano (id de teste, ambiente
+        trocado) não tem outro jeito de sair. Nome feio de propósito: quem
+        escrever isto num handler vai ser perguntado por quê no PR.
+        """
+        return super().delete()
+
+
 class PostEspelho(TimestampedModel):
     """Espelho local dos posts que vivem no WordPress (ADR-02).
 
@@ -138,6 +174,8 @@ class PostEspelho(TimestampedModel):
     published_at = models.DateTimeField(null=True, blank=True)
     url = models.URLField(max_length=500, blank=True, default="")
 
+    objects = PostEspelhoQuerySet.as_manager()
+
     class Meta:
         verbose_name = "Post espelhado"
         verbose_name_plural = "Posts espelhados"
@@ -153,6 +191,18 @@ class PostEspelho(TimestampedModel):
 
     def __str__(self) -> str:
         return self.titulo
+
+    def delete(self, *args, **kwargs):
+        """Invariante, não convenção (AC7 da Story 3.4).
+
+        Um comentário sob a retenção de 6 meses do Marco Civil não pode
+        depender de ninguém lembrar da regra. Aqui a regra é o código.
+        """
+        raise RemocaoDeEspelhoProibida()
+
+    def _remover_de_verdade(self, *args, **kwargs):
+        """Ver `PostEspelhoQuerySet._remover_de_verdade`."""
+        return super().delete(*args, **kwargs)
 
     @property
     def aceita_interacao(self) -> bool:
