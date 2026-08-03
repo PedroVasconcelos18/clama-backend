@@ -885,3 +885,114 @@ def _checar_chave_indexnow(base: str, resultado: dict) -> None:
                 "detalhe": "o arquivo na raiz não contém a chave configurada",
             }
         )
+
+
+# Monitoramento pós-cutover (Story 6.8).
+#
+# ⚠️ **"Zero 404" sozinho não captura os dois modos de falha mais prováveis
+# desta migração**, e é por isso que a task mede 301 separado:
+#
+#   barra final divergente   toda URL de post passa a receber 301. Nenhum 404,
+#                            e ainda assim regressão real — um salto extra em
+#                            cada acesso vindo da busca.
+#   paginação sem redirect   `/blog?page=2` responde **200 com a página 1**.
+#                            Nem 404 nem 301: conteúdo errado com status de
+#                            sucesso, e o Google reindexando duplicata.
+#
+# O resultado alimenta o portão da Story 7.1: métrica fora do alvo de forma
+# sustentada impede declarar o período concluído, e o Epic 7 não começa.
+POS_CUTOVER_TIMEOUT = 15
+
+
+@shared_task
+def verificar_urls_indexadas() -> dict:
+    """Confere que as URLs previamente indexadas continuam em 200 direto.
+
+    Returns:
+        Contadores e a lista nominal de cada URL fora do esperado.
+    """
+    from clama.blog.models import PostEspelho, PostEspelhoStatus
+
+    base = (settings.FRONTEND_PUBLIC_BLOG_BASE_URL or "").rstrip("/")
+
+    resultado = {
+        "verificadas": 0,
+        "ok": 0,
+        "com_404": [],
+        "com_301": [],
+        "outros": [],
+        "divergencia_do_espelho": 0,
+    }
+
+    if not base:
+        return resultado
+
+    urls = [f"{base}/blog"] + [
+        f"{base}/blog/{slug}"
+        for slug in PostEspelho.objects.filter(status=PostEspelhoStatus.PUBLICADO)
+        .order_by("slug")
+        .values_list("slug", flat=True)
+    ]
+
+    for url in urls:
+        resultado["verificadas"] += 1
+
+        try:
+            # `allow_redirects=False` é o ponto: seguir o redirect esconderia
+            # exatamente o que se quer medir.
+            resposta = requests.get(
+                url, timeout=POS_CUTOVER_TIMEOUT, allow_redirects=False
+            )
+        except requests.RequestException as exc:
+            resultado["outros"].append({"url": url, "erro": type(exc).__name__})
+            continue
+
+        codigo = resposta.status_code
+
+        if codigo == 200:
+            resultado["ok"] += 1
+        elif codigo == 404:
+            resultado["com_404"].append({"url": url})
+        elif 300 <= codigo < 400:
+            resultado["com_301"].append(
+                {
+                    "url": url,
+                    "status": codigo,
+                    "para": resposta.headers.get("Location", ""),
+                }
+            )
+        else:
+            resultado["outros"].append({"url": url, "status": codigo})
+
+    # AC7 — a divergência entre espelho e WordPress permanece em zero. Reusa o
+    # contador que a reconciliação já mantém, em vez de medir de novo.
+    resultado["divergencia_do_espelho"] = cache.get(_CACHE_RODADAS_DIVERGENTES) or 0
+
+    problemas = (
+        len(resultado["com_404"]) + len(resultado["com_301"]) + len(resultado["outros"])
+    )
+
+    if problemas:
+        logger.error(
+            "urls_indexadas_com_regressao",
+            extra={"event": "verificar_urls_indexadas", **resultado},
+        )
+        # Nomeia até dez — "12 URLs com problema" manda procurar do zero.
+        exemplos = ", ".join(
+            item["url"]
+            for item in (
+                resultado["com_404"] + resultado["com_301"] + resultado["outros"]
+            )[:10]
+        )
+        sentry_sdk.capture_message(
+            f"Regressão em URL indexada — {len(resultado['com_404'])} com 404, "
+            f"{len(resultado['com_301'])} com redirect inesperado. {exemplos}",
+            level="error",
+        )
+    else:
+        logger.info(
+            "urls_indexadas_ok",
+            extra={"event": "verificar_urls_indexadas", **resultado},
+        )
+
+    return resultado

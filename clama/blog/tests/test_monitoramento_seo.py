@@ -323,3 +323,77 @@ class TestDiffDeUrls:
 
         assert "https://clama.me/blog/post-1" in dados["iguais"]
         assert dados["some_no_cutover"] == []
+
+
+@pytest.mark.django_db
+class TestUrlsIndexadasPosCutover:
+    """Story 6.8 — "zero 404" sozinho não captura os dois modos de falha mais
+    prováveis desta migração."""
+
+    def _espelho(self, slug):
+        from clama.blog.tests.factories import PostEspelhoFactory
+
+        return PostEspelhoFactory(slug=slug)
+
+    def _rodar(self, side_effect):
+        from clama.blog.tasks import verificar_urls_indexadas
+
+        with patch("clama.blog.tasks.requests.get") as get:
+            get.side_effect = side_effect
+            with patch("clama.blog.tasks.sentry_sdk") as sentry:
+                return verificar_urls_indexadas(), sentry, get
+
+    def test_tudo_em_200_nao_alerta(self, base):
+        self._espelho("post-1")
+
+        r, sentry, _ = self._rodar(lambda url, **k: resposta("ok", 200))
+
+        assert r["com_404"] == [] and r["com_301"] == []
+        assert r["ok"] == r["verificadas"]
+        sentry.capture_message.assert_not_called()
+
+    def test_301_inesperado_e_reportado_separado_de_404(self, base):
+        # É o Furo 5: barra final divergente faz toda URL de post receber 301.
+        # Nenhum 404, e ainda assim regressão real.
+        self._espelho("post-1")
+
+        r, sentry, _ = self._rodar(
+            lambda url, **k: resposta("", 301, headers={"Location": url + "/"})
+        )
+
+        assert r["com_404"] == []
+        assert len(r["com_301"]) == r["verificadas"]
+        assert r["com_301"][0]["para"].endswith("/")
+        sentry.capture_message.assert_called_once()
+
+    def test_nao_segue_o_redirect(self, base):
+        # Seguir o redirect esconderia exatamente o que se quer medir.
+        self._espelho("post-1")
+
+        _r, _sentry, get = self._rodar(lambda url, **k: resposta("ok", 200))
+
+        assert get.call_args.kwargs["allow_redirects"] is False
+
+    def test_404_e_reportado_nominalmente(self, base):
+        self._espelho("post-sumido")
+
+        r, sentry, _ = self._rodar(lambda url, **k: resposta("", 404))
+
+        assert any("post-sumido" in item["url"] for item in r["com_404"])
+        assert "post-sumido" in sentry.capture_message.call_args.args[0]
+
+    def test_a_listagem_tambem_e_verificada(self, base):
+        # `/blog` sem sufixo é a URL que a regra dedicada da Story 6.1
+        # protege; se a regra sumir, é aqui que aparece.
+        self._espelho("post-1")
+
+        r, _s, _g = self._rodar(lambda url, **k: resposta("ok", 200))
+
+        assert r["verificadas"] == 2
+
+    def test_erro_de_rede_nao_derruba_a_varredura(self, base):
+        self._espelho("post-1")
+
+        r, _s, _g = self._rodar(requests.Timeout("caiu"))
+
+        assert len(r["outros"]) == r["verificadas"]

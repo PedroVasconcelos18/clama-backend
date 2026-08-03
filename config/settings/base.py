@@ -348,6 +348,17 @@ CELERY_BEAT_SCHEDULE = {
         # uso atual; preferimos 6h pra detectar problema mais cedo.
         "schedule": crontab(minute=17, hour="*/6"),
     },
+    "blog-verificar-urls-indexadas": {
+        "task": "clama.blog.tasks.verificar_urls_indexadas",
+        # Story 6.8 — diário, às 04:00, na janela de baixo tráfego.
+        #
+        # É varredura de todas as URLs publicadas: a cada 30 minutos seria
+        # carga sem ganho, porque o que ela detecta (barra final divergente,
+        # paginação servindo a página errada) não aparece e desaparece — é
+        # consequência de deploy, e um dia de atraso na detecção é aceitável
+        # diante do custo de varrer o blog inteiro 48 vezes por dia.
+        "schedule": crontab(minute=0, hour=4),
+    },
     "blog-monitorar-seo-do-dominio": {
         "task": "clama.blog.tasks.monitorar_seo_do_dominio",
         # 🔴 Story 5.10 — condição de aceitação do ADR-03.
