@@ -174,6 +174,27 @@ class PostEspelho(TimestampedModel):
     published_at = models.DateTimeField(null=True, blank=True)
     url = models.URLField(max_length=500, blank=True, default="")
 
+    # Mapeamento `Post.id → wp_post_id` (Story 4.3).
+    #
+    # Fica aqui, e não em tabela separada, por dois motivos: o espelho já
+    # carrega o `wp_post_id`, então isto fecha o par sem criar uma segunda
+    # fonte de verdade durante a janela crítica; e a exportação passa a
+    # popular o espelho como efeito colateral, em vez de depender do webhook
+    # chegar depois.
+    #
+    # Nullable porque só as linhas vindas da migração têm origem no Django —
+    # um post criado direto no WordPress nunca terá.
+    #
+    # `SET_NULL` e não `PROTECT`: apagar um `Post` legado (o que o Epic 7 fará)
+    # não pode derrubar o espelho. O vínculo some; a linha fica.
+    post_legado = models.OneToOneField(
+        Post,
+        on_delete=models.SET_NULL,
+        related_name="espelho",
+        null=True,
+        blank=True,
+    )
+
     objects = PostEspelhoQuerySet.as_manager()
 
     class Meta:

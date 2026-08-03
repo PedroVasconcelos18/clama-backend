@@ -1,7 +1,12 @@
-"""Client de leitura da REST API do WordPress (Story 3.5).
+"""Client da REST API do WordPress (Stories 3.5 e 4.1).
 
-Só leitura. O Django nunca escreve no WordPress — o fluxo é o inverso: o
-WordPress avisa por webhook (Story 3.2) e o Django espelha.
+**Leitura no regime normal.** O Django não escreve no WordPress durante a
+operação — o fluxo é o inverso: o WordPress avisa por webhook (Story 3.2) e o
+Django espelha.
+
+A escrita existe para **uma coisa só**: a exportação única do conteúdo legado
+(Story 4.1), rodada por comando de management. Depois do Epic 4 esses métodos
+não são chamados por caminho nenhum de request.
 
 Credencial: **Application Password** de um usuário WordPress dedicado
 (`clama-django-sync`), com o menor papel que atende leitura. São chaves de 24
@@ -216,3 +221,86 @@ class WordPressClient:
             )
 
         return posts[0] if posts else None
+
+    # ------------------------------------------------------------------ #
+    # Escrita — exclusiva da exportação do Epic 4.                        #
+    # ------------------------------------------------------------------ #
+
+    @with_retry(
+        max_attempts=3,
+        backoff_seconds=[1, 2, 4],
+        retriable_status_codes=STATUS_RETENTAVEIS,
+    )
+    def _post(self, caminho: str, payload: dict) -> requests.Response:
+        url = f"{self.base_url}{caminho}"
+        inicio = time.time()
+
+        try:
+            resposta = requests.post(
+                url,
+                json=payload,
+                auth=self._auth(),
+                timeout=TIMEOUT_SEGUNDOS,
+                headers={"Accept": "application/json"},
+            )
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            logger.warning(
+                "wordpress_api_erro_de_rede",
+                extra={
+                    "event": "wordpress_api_request",
+                    "caminho": caminho,
+                    "erro": str(exc),
+                },
+            )
+            raise
+
+        logger.info(
+            "wordpress_api_request",
+            extra={
+                "event": "wordpress_api_request",
+                "caminho": caminho,
+                "metodo": "POST",
+                "status": resposta.status_code,
+                "ms": round((time.time() - inicio) * 1000),
+            },
+        )
+        resposta.raise_for_status()
+        return resposta
+
+    def criar_ou_atualizar_post(
+        self, *, wp_post_id: int | None, campos: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Cria (POST) ou atualiza (POST no id) um post.
+
+        A REST API do WordPress usa POST para os dois — não há PUT. Passar
+        `wp_post_id` faz o endpoint virar `/posts/<id>`, que atualiza.
+        """
+        if not self.configurado:
+            raise WordPressIndisponivel(
+                message="WORDPRESS_API_URL/USER/APP_PASSWORD não configurados."
+            )
+
+        caminho = "/wp-json/wp/v2/posts"
+        if wp_post_id:
+            caminho = f"{caminho}/{wp_post_id}"
+
+        try:
+            resposta = self._post(caminho, campos)
+        except requests.RequestException as exc:
+            raise WordPressIndisponivel(
+                message=f"Falha ao gravar post no WordPress: {exc}"
+            ) from exc
+
+        try:
+            corpo = resposta.json()
+        except ValueError as exc:
+            raise WordPressIndisponivel(
+                message="Resposta do WordPress não é JSON."
+            ) from exc
+
+        if not isinstance(corpo, dict) or "id" not in corpo:
+            raise WordPressIndisponivel(
+                message="Resposta do WordPress não traz o id do post."
+            )
+
+        return corpo
