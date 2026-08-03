@@ -197,6 +197,8 @@ class TestReconciliacao:
             "criados",
             "atualizados",
             "sem_mudanca",
+            "divergentes",
+            "rodadas_divergentes",
             "abortada",
             "motivo",
         }
@@ -337,3 +339,160 @@ class TestCadenciaDocumentada:
         base = Path(settings.BASE_DIR) / "config" / "settings" / "base.py"
         texto = base.read_text(encoding="utf-8")
         assert "limite superior da janela de dessincronia" in texto
+
+
+@pytest.mark.django_db
+class TestMonitoramentoDaDivergencia:
+    """Story 3.7. Divergência pontual é a janela de sincronia; divergência que
+    não zera é webhook perdendo evento."""
+
+    @pytest.fixture(autouse=True)
+    def _cache_limpo(self):
+        from django.core.cache import cache
+
+        cache.delete("blog:reconciliacao:rodadas_divergentes")
+        yield
+        cache.delete("blog:reconciliacao:rodadas_divergentes")
+
+    def test_zero_e_o_valor_esperado(self, com_credencial):
+        # AC2. Espelho em dia: nenhuma divergência, nenhum alerta.
+        from datetime import datetime
+
+        PostEspelhoFactory(
+            wp_post_id=1,
+            slug="post-1",
+            titulo="Post 1",
+            status=PostEspelhoStatus.PUBLICADO,
+            url="https://clama.me/blog/post-1",
+            published_at=datetime(2026, 8, 3, 10, 0, 0, tzinfo=UTC),
+        )
+
+        with patch("clama.blog.services.wordpress_client.requests.get") as get:
+            get.return_value = resposta_ok([post_wp(1)])
+            with patch("clama.blog.tasks.sentry_sdk") as sentry:
+                contadores = reconciliar_espelho_com_wordpress()
+
+        assert contadores["divergentes"] == []
+        assert contadores["rodadas_divergentes"] == 0
+        sentry.capture_message.assert_not_called()
+
+    def test_divergencia_pontual_nao_alerta(self, com_credencial):
+        # A primeira rodada com divergência pode ser só a janela de sincronia
+        # — o webhook ainda a caminho. Alertar aqui produziria ruído a cada
+        # publicação.
+        PostEspelhoFactory(wp_post_id=5, status=PostEspelhoStatus.PUBLICADO)
+
+        with patch("clama.blog.services.wordpress_client.requests.get") as get:
+            get.return_value = resposta_ok([post_wp(5, status="draft")])
+            with patch("clama.blog.tasks.sentry_sdk") as sentry:
+                contadores = reconciliar_espelho_com_wordpress()
+
+        assert contadores["rodadas_divergentes"] == 1
+        sentry.capture_message.assert_not_called()
+
+    def test_divergencia_persistente_alerta(self, com_credencial):
+        # AC3. Duas rodadas seguidas = 30 minutos de discordância. Isso não é
+        # janela de sincronia; é defeito.
+        PostEspelhoFactory(wp_post_id=5, status=PostEspelhoStatus.PUBLICADO)
+
+        with patch("clama.blog.services.wordpress_client.requests.get") as get:
+            with patch("clama.blog.tasks.sentry_sdk") as sentry:
+                get.return_value = resposta_ok([post_wp(5, status="draft")])
+                reconciliar_espelho_com_wordpress()
+                # Segunda rodada: o espelho volta a divergir (simula o webhook
+                # continuando a perder evento).
+                PostEspelho.objects.filter(wp_post_id=5).update(
+                    status=PostEspelhoStatus.PUBLICADO
+                )
+                contadores = reconciliar_espelho_com_wordpress()
+
+        assert contadores["rodadas_divergentes"] == 2
+        sentry.capture_message.assert_called_once()
+        assert sentry.capture_message.call_args.kwargs["level"] == "warning"
+
+    def test_o_alerta_nomeia_os_posts_que_divergem(self, com_credencial):
+        # AC4, e é o que separa alerta útil de ruído. "3 divergências" manda
+        # alguém investigar do zero.
+        PostEspelhoFactory(
+            wp_post_id=5, slug="oracao-da-noite", status=PostEspelhoStatus.PUBLICADO
+        )
+
+        with patch("clama.blog.services.wordpress_client.requests.get") as get:
+            with patch("clama.blog.tasks.sentry_sdk") as sentry:
+                get.return_value = resposta_ok(
+                    [post_wp(5, slug="oracao-da-noite", status="draft")]
+                )
+                reconciliar_espelho_com_wordpress()
+                PostEspelho.objects.filter(wp_post_id=5).update(
+                    status=PostEspelhoStatus.PUBLICADO
+                )
+                reconciliar_espelho_com_wordpress()
+
+        mensagem = sentry.capture_message.call_args.args[0]
+        assert "oracao-da-noite" in mensagem
+        assert "#5" in mensagem
+        assert "status" in mensagem
+
+    def test_os_campos_divergentes_sao_identificados(self, com_credencial):
+        PostEspelhoFactory(wp_post_id=5, slug="slug-velho", titulo="Título velho")
+
+        with patch("clama.blog.services.wordpress_client.requests.get") as get:
+            get.return_value = resposta_ok(
+                [post_wp(5, slug="slug-novo", title={"raw": "Título novo"})]
+            )
+            contadores = reconciliar_espelho_com_wordpress()
+
+        divergente = contadores["divergentes"][0]
+        assert divergente["wp_post_id"] == 5
+        assert divergente["slug"] == "slug-novo"
+        assert set(divergente["campos"]) >= {"slug", "titulo"}
+
+    def test_post_criado_pela_reconciliacao_conta_como_divergencia(
+        self, com_credencial
+    ):
+        # Um post que a reconciliação precisou criar é um evento de webhook
+        # que se perdeu — não um post novo. Não contar isso esconderia
+        # justamente o defeito que a story quer revelar.
+        with patch("clama.blog.services.wordpress_client.requests.get") as get:
+            get.return_value = resposta_ok([post_wp(77)])
+            contadores = reconciliar_espelho_com_wordpress()
+
+        assert contadores["criados"] == 1
+        assert contadores["rodadas_divergentes"] == 1
+
+    def test_o_contador_zera_quando_o_espelho_alcanca(self, com_credencial):
+        # Sem o reset, uma divergência antiga alertaria para sempre.
+        from datetime import datetime
+
+        from django.core.cache import cache
+
+        cache.set("blog:reconciliacao:rodadas_divergentes", 5, 3600)
+        PostEspelhoFactory(
+            wp_post_id=1,
+            slug="post-1",
+            titulo="Post 1",
+            status=PostEspelhoStatus.PUBLICADO,
+            url="https://clama.me/blog/post-1",
+            published_at=datetime(2026, 8, 3, 10, 0, 0, tzinfo=UTC),
+        )
+
+        with patch("clama.blog.services.wordpress_client.requests.get") as get:
+            get.return_value = resposta_ok([post_wp(1)])
+            contadores = reconciliar_espelho_com_wordpress()
+
+        assert contadores["rodadas_divergentes"] == 0
+        assert cache.get("blog:reconciliacao:rodadas_divergentes") is None
+
+    def test_rodada_abortada_nao_conta_como_divergencia(self, com_credencial):
+        # WordPress fora do ar não é discordância — é ausência de informação.
+        # Contar isso alertaria "espelho divergente" quando ninguém sabe.
+        with patch("clama.blog.services.wordpress_client.requests.get") as get:
+            get.side_effect = requests.Timeout("caiu")
+            with patch("clama.core.retry.time.sleep"):
+                with patch("clama.blog.tasks.sentry_sdk") as sentry:
+                    contadores = reconciliar_espelho_com_wordpress()
+
+        assert contadores["abortada"] is True
+        assert contadores["rodadas_divergentes"] == 0
+        # O alerta que dispara é o de aborto, com a mensagem certa.
+        assert "indisponível" in sentry.capture_message.call_args.args[0]

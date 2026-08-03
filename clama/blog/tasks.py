@@ -22,6 +22,7 @@ import sentry_sdk
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 from django.conf import settings
+from django.core.cache import cache
 from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
@@ -422,6 +423,21 @@ def _como_bool(valor) -> bool:
 RECONCILIACAO_POR_PAGINA = 100
 RECONCILIACAO_MAX_PAGINAS = 50
 
+# Monitoramento da divergência (Story 3.7).
+#
+# Divergência **pontual** é esperada: a rodada pode cair no meio da janela em
+# que o webhook ainda está a caminho. Divergência **persistente** significa
+# webhook perdendo evento — é defeito, e é isso que merece alerta.
+#
+# Duas rodadas seguidas com divergência = 30 minutos de discordância. Alertar
+# na primeira produziria ruído a cada publicação; esperar mais adiaria a
+# descoberta do defeito que a story existe para revelar.
+RECONCILIACAO_RODADAS_PARA_ALERTAR = 2
+_CACHE_RODADAS_DIVERGENTES = "blog:reconciliacao:rodadas_divergentes"
+# TTL generoso: o contador precisa sobreviver ao intervalo entre rodadas com
+# folga, senão "persistente" nunca é detectado porque a chave expira antes.
+_CACHE_TTL_SEGUNDOS = 3600
+
 
 @shared_task
 def reconciliar_espelho_com_wordpress() -> dict:
@@ -449,6 +465,10 @@ def reconciliar_espelho_com_wordpress() -> dict:
         "criados": 0,
         "atualizados": 0,
         "sem_mudanca": 0,
+        # Story 3.7: **quais** posts divergem, não só quantos. "3 divergências"
+        # manda alguém investigar do zero; a lista manda direto ao problema.
+        "divergentes": [],
+        "rodadas_divergentes": 0,
         "abortada": False,
         "motivo": "",
     }
@@ -561,16 +581,87 @@ def reconciliar_espelho_com_wordpress() -> dict:
             contadores["sem_mudanca"] += 1
             continue
 
+        contadores["divergentes"].append(
+            {
+                "wp_post_id": wp_post_id,
+                "slug": desejado["slug"],
+                "campos": divergentes,
+            }
+        )
+
         for campo, valor in desejado.items():
             setattr(espelho, campo, valor)
         espelho.save(update_fields=[*desejado.keys(), "updated_at"])
         contadores["atualizados"] += 1
+
+    _avaliar_divergencia(contadores)
 
     logger.info(
         "reconciliacao_concluida",
         extra={"event": "reconciliacao_concluida", **contadores},
     )
     return contadores
+
+
+def _avaliar_divergencia(contadores: dict) -> None:
+    """Alerta quando a divergência **não zera** entre rodadas (Story 3.7).
+
+    Zero é o valor esperado (AC2). Um valor pontual diferente de zero é a
+    janela de sincronia; um valor que não zera é webhook perdendo evento.
+
+    O contador vive no cache porque o sinal é "duas rodadas seguidas", e a
+    task não tem outra memória entre execuções. Se o cache cair, o pior caso é
+    perder a contagem e recomeçar — o alerta atrasa uma rodada, não some.
+    """
+    # `criados` também conta: um post que a reconciliação precisou criar é um
+    # evento de webhook que se perdeu, não um post novo.
+    houve_divergencia = bool(contadores["divergentes"]) or contadores["criados"] > 0
+
+    if not houve_divergencia:
+        cache.delete(_CACHE_RODADAS_DIVERGENTES)
+        contadores["rodadas_divergentes"] = 0
+        return
+
+    rodadas = (cache.get(_CACHE_RODADAS_DIVERGENTES) or 0) + 1
+    cache.set(_CACHE_RODADAS_DIVERGENTES, rodadas, _CACHE_TTL_SEGUNDOS)
+    contadores["rodadas_divergentes"] = rodadas
+
+    if rodadas < RECONCILIACAO_RODADAS_PARA_ALERTAR:
+        logger.info(
+            "reconciliacao_divergencia_pontual",
+            extra={
+                "event": "reconciliacao_divergencia",
+                "rodadas": rodadas,
+                "criados": contadores["criados"],
+                "atualizados": contadores["atualizados"],
+            },
+        )
+        return
+
+    identificacao = (
+        ", ".join(
+            f"{d['slug']}#{d['wp_post_id']}({'/'.join(d['campos'])})"
+            for d in contadores["divergentes"][:10]
+        )
+        or "sem campo divergente; posts ausentes foram criados"
+    )
+
+    logger.warning(
+        "reconciliacao_divergencia_persistente",
+        extra={
+            "event": "reconciliacao_divergencia_persistente",
+            "rodadas": rodadas,
+            "criados": contadores["criados"],
+            "atualizados": contadores["atualizados"],
+            "divergentes": contadores["divergentes"][:10],
+        },
+    )
+    sentry_sdk.capture_message(
+        f"Espelho divergente do WordPress em {rodadas} rodadas seguidas — "
+        f"{contadores['criados']} criados, {contadores['atualizados']} atualizados. "
+        f"Posts: {identificacao}",
+        level="warning",
+    )
 
 
 def _data_do_wordpress(valor) -> datetime | None:
