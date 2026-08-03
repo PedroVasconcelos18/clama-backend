@@ -14,7 +14,7 @@ warning (sem Sentry — IndexNow é tolerante a falhas, alertas seriam ruído).
 """
 
 import logging
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urljoin
 
 import requests
@@ -409,3 +409,184 @@ def _como_bool(valor) -> bool:
     if isinstance(valor, bool):
         return valor
     return str(valor).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Reconciliação do espelho (Story 3.6).
+#
+# ⚠️ A cadência **é** o limite superior da janela de dessincronia. O WordPress
+# não tem fila de retentativa para `wp_remote_post`: se a entrega do webhook
+# falhar — origem fora do ar, timeout, deploy do Django em curso —, o evento se
+# perde em silêncio. A idempotência trata duplicata; ela não trata ausência.
+# Esta task é o mecanismo de correção primário, e a cada 15 minutos significa
+# "o espelho pode ficar até 15 minutos errado".
+RECONCILIACAO_POR_PAGINA = 100
+RECONCILIACAO_MAX_PAGINAS = 50
+
+
+@shared_task
+def reconciliar_espelho_com_wordpress() -> dict:
+    """Corrige divergências entre o espelho e o WordPress.
+
+    **Nunca remove linha**, e nunca conclui exclusão por ausência: post que
+    não aparece na resposta é ignorado, não apagado. Uma listagem incompleta
+    por falha transitória viraria remoção em massa de vínculo de comentário —
+    é a decisão nº 5 do ADR-02, e a mesma regra do AC7 da Story 3.4 vista de
+    outro ângulo.
+
+    Returns:
+        Contadores para inspeção em Flower e log.
+    """
+    from clama.blog.models import PostEspelho
+    from clama.blog.services.wordpress_client import (
+        WordPressClient,
+        WordPressIndisponivel,
+    )
+    from clama.blog.services.wordpress_webhook import status_efetivo
+
+    contadores = {
+        "paginas_lidas": 0,
+        "posts_vistos": 0,
+        "criados": 0,
+        "atualizados": 0,
+        "sem_mudanca": 0,
+        "abortada": False,
+        "motivo": "",
+    }
+
+    cliente = WordPressClient()
+
+    if not cliente.configurado:
+        contadores["abortada"] = True
+        contadores["motivo"] = "credencial_ausente"
+        logger.warning(
+            "reconciliacao_abortada",
+            extra={"event": "reconciliacao_abortada", "motivo": "credencial_ausente"},
+        )
+        return contadores
+
+    vistos: list[dict] = []
+    pagina = 1
+
+    while pagina <= RECONCILIACAO_MAX_PAGINAS:
+        try:
+            posts, total_paginas = cliente.listar_posts(
+                pagina=pagina, por_pagina=RECONCILIACAO_POR_PAGINA
+            )
+        except WordPressIndisponivel as exc:
+            # Aborta inteira. Aplicar o que já foi lido deixaria o espelho num
+            # estado que nem o WordPress nem a reconciliação anterior
+            # descrevem — pior que não fazer nada.
+            contadores["abortada"] = True
+            contadores["motivo"] = "wordpress_indisponivel"
+            logger.warning(
+                "reconciliacao_abortada",
+                extra={
+                    "event": "reconciliacao_abortada",
+                    "motivo": "wordpress_indisponivel",
+                    "erro": str(exc),
+                    "pagina": pagina,
+                },
+            )
+            sentry_sdk.capture_message(
+                "Reconciliação do espelho abortada: WordPress indisponível",
+                level="warning",
+            )
+            return contadores
+
+        vistos.extend(posts)
+        contadores["paginas_lidas"] += 1
+
+        if pagina >= total_paginas:
+            break
+        pagina += 1
+    else:
+        # Saiu pelo teto de páginas: a listagem está incompleta e não sabemos
+        # o que ficou de fora. Abortar é o único desfecho seguro.
+        contadores["abortada"] = True
+        contadores["motivo"] = "listagem_incompleta"
+        logger.warning(
+            "reconciliacao_abortada",
+            extra={
+                "event": "reconciliacao_abortada",
+                "motivo": "listagem_incompleta",
+                "paginas_lidas": contadores["paginas_lidas"],
+            },
+        )
+        sentry_sdk.capture_message(
+            "Reconciliação do espelho abortada: listagem incompleta",
+            level="warning",
+        )
+        return contadores
+
+    contadores["posts_vistos"] = len(vistos)
+
+    for post in vistos:
+        try:
+            wp_post_id = int(post["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        desejado = {
+            "slug": str(post.get("slug") or "")[:200],
+            "titulo": str(
+                (post.get("title") or {}).get("raw")
+                or (post.get("title") or {}).get("rendered")
+                or ""
+            )[:200],
+            "status": status_efetivo(
+                str(post.get("status") or ""),
+                protegido_por_senha=bool(post.get("password")),
+            ),
+            "published_at": _data_do_wordpress(post.get("date_gmt")),
+            "url": str(post.get("link") or "")[:500],
+        }
+
+        espelho = PostEspelho.objects.filter(wp_post_id=wp_post_id).first()
+
+        if espelho is None:
+            PostEspelho.objects.create(wp_post_id=wp_post_id, **desejado)
+            contadores["criados"] += 1
+            continue
+
+        divergentes = [
+            campo
+            for campo, valor in desejado.items()
+            if getattr(espelho, campo) != valor
+        ]
+
+        if not divergentes:
+            # Early-return por linha: o caso comum é não haver divergência, e
+            # gravar mesmo assim mexeria em `updated_at` de tudo a cada 15
+            # minutos, poluindo qualquer auditoria por data.
+            contadores["sem_mudanca"] += 1
+            continue
+
+        for campo, valor in desejado.items():
+            setattr(espelho, campo, valor)
+        espelho.save(update_fields=[*desejado.keys(), "updated_at"])
+        contadores["atualizados"] += 1
+
+    logger.info(
+        "reconciliacao_concluida",
+        extra={"event": "reconciliacao_concluida", **contadores},
+    )
+    return contadores
+
+
+def _data_do_wordpress(valor) -> datetime | None:
+    """`date_gmt` do WordPress vem sem timezone, mas é UTC.
+
+    Interpretar como horário local produziria posts publicados "no futuro" ou
+    "há três horas" dependendo do fuso do servidor.
+
+    `dt_timezone.utc` e não `django.utils.timezone.utc`: este último está
+    deprecado no Django 4.2 e foi removido no 5.0.
+    """
+    if not valor:
+        return None
+    parsed = parse_datetime(str(valor))
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        return parsed.replace(tzinfo=UTC)
+    return parsed

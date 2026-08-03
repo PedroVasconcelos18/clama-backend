@@ -347,6 +347,23 @@ CELERY_BEAT_SCHEDULE = {
         # uso atual; preferimos 6h pra detectar problema mais cedo.
         "schedule": crontab(minute=17, hour="*/6"),
     },
+    "blog-reconciliar-espelho-wordpress": {
+        "task": "clama.blog.tasks.reconciliar_espelho_com_wordpress",
+        # ⚠️ **Esta cadência É o limite superior da janela de dessincronia.**
+        #
+        # O WordPress não tem fila de retentativa para `wp_remote_post`: se a
+        # entrega do webhook falhar — origem fora do ar, timeout, deploy do
+        # Django em curso —, o evento se perde em silêncio. A idempotência
+        # trata duplicata, não ausência; esta task é o mecanismo de correção
+        # primário.
+        #
+        # 15 minutos = o espelho pode ficar até 15 minutos errado. O custo é
+        # uma listagem paginada da REST API do WordPress a cada rodada, com
+        # early-return por linha quando não há divergência. Aumentar o
+        # intervalo aumenta a janela na mesma proporção — é uma troca direta,
+        # não um detalhe de tuning.
+        "schedule": crontab(minute="*/15"),
+    },
     "blog-alerta-comentarios-diario": {
         "task": "clama.blog.tasks.enviar_alerta_comentarios_diario",
         # 08:00 BRT — admin lê com café da manhã.
@@ -497,6 +514,12 @@ MERCADOPAGO_WEBHOOK_SECRET = env("MERCADOPAGO_WEBHOOK_SECRET", default="")
 # aqui e **sem default** em production.py: sem segredo o middleware devolve
 # 401 em tudo, que é a falha correta — o contrário abriria o endpoint.
 WORDPRESS_WEBHOOK_SECRET = env("WORDPRESS_WEBHOOK_SECRET", default="")
+# Leitura da REST API do WordPress (Story 3.5). A credencial é uma Application
+# Password de um usuário dedicado (`clama-django-sync`), revogável sem trocar a
+# senha de nenhum operador. Nunca no git — env var no Railway.
+WORDPRESS_API_URL = env("WORDPRESS_API_URL", default="")
+WORDPRESS_API_USER = env("WORDPRESS_API_USER", default="")
+WORDPRESS_API_APP_PASSWORD = env("WORDPRESS_API_APP_PASSWORD", default="")
 # PIX aceita valores baixos (centavos), então o mínimo é 1 centavo — diferente do
 # mínimo de R$5,00 do gateway anterior. Usado pelo CheckoutView (MP.4).
 MERCADOPAGO_MIN_VALOR_CENTAVOS = env.int("MERCADOPAGO_MIN_VALOR_CENTAVOS", default=1)

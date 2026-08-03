@@ -81,6 +81,11 @@ MERCADOPAGO_WEBHOOK_SECRET = env("MERCADOPAGO_WEBHOOK_SECRET")
 # Sem default de propósito: subir produção sem este segredo tem que falhar
 # no boot, não render 401 silencioso em todo evento de publicação.
 WORDPRESS_WEBHOOK_SECRET = env("WORDPRESS_WEBHOOK_SECRET")
+# Idem: sem default. Boot alto é melhor que reconciliação abortando em
+# silêncio a cada 15 minutos por credencial ausente.
+WORDPRESS_API_URL = env("WORDPRESS_API_URL")
+WORDPRESS_API_USER = env("WORDPRESS_API_USER")
+WORDPRESS_API_APP_PASSWORD = env("WORDPRESS_API_APP_PASSWORD")
 
 # STORAGES
 # ------------------------------------------------------------------------------
