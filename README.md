@@ -270,11 +270,11 @@ Logar apenas:
 ```
 DJANGO_SETTINGS_MODULE=config.settings.production
 DJANGO_SECRET_KEY=<secreto>
-DJANGO_ALLOWED_HOSTS=*.up.railway.app,clama.com.br
+DJANGO_ALLOWED_HOSTS=*.up.railway.app,clama.me,www.clama.me,api.clama.me
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 REDIS_URL=${{Redis.REDIS_URL}}
 CELERY_BROKER_URL=${{Redis.REDIS_URL}}
-DJANGO_CORS_ALLOWED_ORIGINS=https://clama.vercel.app,https://clama.com.br
+DJANGO_CORS_ALLOWED_ORIGINS=https://clama.vercel.app,https://clama.me,https://www.clama.me
 SENTRY_DSN=<do dashboard>
 SENTRY_ENVIRONMENT=production
 ANTHROPIC_API_KEY=<quando disponível>
