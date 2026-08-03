@@ -223,7 +223,22 @@ class ReacaoTipo(models.TextChoices):
 
 class Comentario(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="comentarios")
+    # ⚠️ Nullable desde a Story 3.10. A Story 3.1 mandava não mexer nas FKs
+    # legadas; o que aquela instrução protege é o `on_delete=CASCADE`, que
+    # continua intacto. Mas **não-nulável aqui torna a Story 3.10
+    # inimplementável**: um post criado no WordPress depois do cutover não tem
+    # linha em `Post`, e sem ela nenhum comentário poderia ser gravado.
+    #
+    # A `CheckConstraint` do `Meta` garante que pelo menos uma das duas âncoras
+    # esteja preenchida — comentário pendurado em nada seria pior que o
+    # problema original.
+    post = models.ForeignKey(
+        Post,
+        on_delete=models.CASCADE,
+        related_name="comentarios",
+        null=True,
+        blank=True,
+    )
     # Nullable de propósito: comentário novo em post do WordPress funciona de
     # ponta a ponta antes de o Epic 4 fazer o backfill das linhas antigas.
     #
@@ -250,6 +265,16 @@ class Comentario(TimestampedModel):
         verbose_name = "Comentário"
         verbose_name_plural = "Comentários"
         ordering = ["-created_at"]
+        constraints = [
+            # Comentário precisa de âncora. Sem isto, relaxar as duas FKs para
+            # nullable abriria a porta para comentário pendurado em nada — que
+            # nenhuma tela mostraria e nenhuma moderação alcançaria.
+            models.CheckConstraint(
+                check=models.Q(post__isnull=False)
+                | models.Q(post_espelho__isnull=False),
+                name="ck_blog_comentario_tem_post",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["post", "-created_at"],
@@ -270,7 +295,14 @@ class Comentario(TimestampedModel):
 
 class Reacao(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="reacoes")
+    # Ver o comentário equivalente em `Comentario.post`.
+    post = models.ForeignKey(
+        Post,
+        on_delete=models.CASCADE,
+        related_name="reacoes",
+        null=True,
+        blank=True,
+    )
     post_espelho = models.ForeignKey(
         "PostEspelho",
         on_delete=models.PROTECT,
@@ -309,6 +341,11 @@ class Reacao(TimestampedModel):
                 fields=["post_espelho", "customer", "tipo"],
                 name="uniq_blog_reacao_espelho_customer_tipo",
             ),
+            models.CheckConstraint(
+                check=models.Q(post__isnull=False)
+                | models.Q(post_espelho__isnull=False),
+                name="ck_blog_reacao_tem_post",
+            ),
         ]
         indexes = [
             models.Index(fields=["post", "tipo"], name="idx_blog_reacao_post_tipo"),
@@ -319,7 +356,10 @@ class Reacao(TimestampedModel):
         ]
 
     def __str__(self) -> str:
-        return f"{self.customer.email} {self.tipo} {self.post.slug}"
+        # `post` pode ser nulo desde a Story 3.10; o espelho é a âncora nesse
+        # caso. Desreferenciar direto quebraria o admin numa listagem.
+        ancora = self.post or self.post_espelho
+        return f"{self.customer.email} {self.tipo} {ancora.slug if ancora else '?'}"
 
 
 class CustomerBanido(TimestampedModel):

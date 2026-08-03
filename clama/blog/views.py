@@ -6,7 +6,10 @@ viram em stories futuras (3.1) e ficarão em outra view com `AllowAny`.
 
 from datetime import timedelta
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -18,14 +21,20 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from clama_backend.users.permissions import IsClamaAdmin
 
-from django.contrib.auth import get_user_model
-from rest_framework.views import APIView
-
-from .models import Comentario, CustomerBanido, Post, PostStatus, Reacao, ReacaoTipo
-from .permissions import IsCommentOwner, IsUnbannedCustomer
+from .models import (
+    Comentario,
+    CustomerBanido,
+    Post,
+    PostEspelho,
+    PostStatus,
+    Reacao,
+    ReacaoTipo,
+)
+from .permissions import IsUnbannedCustomer
 from .serializers import (
     AdminComentarioSerializer,
     ComentarioSerializer,
@@ -37,6 +46,12 @@ from .serializers import (
     PostPublicListSerializer,
     PostPublicSerializer,
 )
+from .services.espelho import (
+    PostNaoAceitaInteracao,
+    PostNaoEncontrado,
+    resolver_espelho,
+)
+from .services.wordpress_client import WordPressIndisponivel
 
 COMENTARIO_EDIT_WINDOW = timedelta(minutes=15)
 
@@ -167,18 +182,64 @@ class ComentarioListCreateView(generics.ListCreateAPIView):
             Post, slug=self.kwargs["slug"], status=PostStatus.PUBLICADO
         )
 
+    def _ancoras(self) -> tuple[Post | None, "PostEspelho | None"]:
+        """Resolve as duas âncoras possíveis do comentário.
+
+        Durante a transição um post pode existir só no CMS próprio (legado),
+        só no WordPress, ou nos dois (migrado no Epic 4). Preencher as duas
+        quando as duas existem é o que o `WP-FR32` pede durante a validação.
+
+        A resolução do espelho é **sob demanda** (Story 3.10): a ordem de
+        eventos não garante que o webhook já tenha chegado, e o primeiro
+        leitor a comentar num post recém-publicado receberia erro de FK.
+        """
+        slug = self.kwargs["slug"]
+
+        post = Post.objects.filter(slug=slug, status=PostStatus.PUBLICADO).first()
+        espelho = None
+
+        try:
+            espelho = resolver_espelho(slug)
+        except PostNaoAceitaInteracao:
+            # O espelho existe e diz que o post não está publicado. Isso vence
+            # o legado: o WordPress é a fonte da verdade sobre o estado.
+            raise
+        except (PostNaoEncontrado, WordPressIndisponivel):
+            # Sem espelho e sem WordPress: se há post legado publicado, o
+            # caminho antigo ainda serve. Se não há, o 404 abaixo responde.
+            if post is None:
+                raise
+
+        if post is None and espelho is None:
+            raise PostNaoEncontrado()
+
+        return post, espelho
+
     def get_queryset(self):
-        post = self.get_post()
-        return Comentario.objects.filter(post=post)
+        slug = self.kwargs["slug"]
+        post = Post.objects.filter(slug=slug, status=PostStatus.PUBLICADO).first()
+
+        if post is not None:
+            # Durante a transição um post migrado tem comentários nas duas
+            # colunas; o OR evita que os antigos sumam da listagem.
+            return Comentario.objects.filter(
+                Q(post=post) | Q(post_espelho__slug=slug)
+            ).distinct()
+
+        espelho = PostEspelho.objects.filter(slug=slug).first()
+        if espelho is None:
+            raise Http404
+        return Comentario.objects.filter(post_espelho=espelho)
 
     def perform_create(self, serializer):
         if getattr(self.request, "limited", False):
             # Sinaliza pro `create()` retornar 429
             self._rate_limited = True
             return
-        post = self.get_post()
+        post, espelho = self._ancoras()
         serializer.save(
             post=post,
+            post_espelho=espelho,
             customer=self.request.user,
             ip_address=_client_ip(self.request),
         )
@@ -210,16 +271,15 @@ class ComentarioListCreateView(generics.ListCreateAPIView):
                 post = self.get_post()
             except Exception:
                 post = None
-            if post and Comentario.objects.filter(
-                post=post, created_at__gt=cutoff
-            ).exists():
+            if (
+                post
+                and Comentario.objects.filter(post=post, created_at__gt=cutoff).exists()
+            ):
                 response["X-Robots-Tag"] = "noindex"
         return response
 
 
-class ComentarioUpdateDestroyView(
-    generics.RetrieveUpdateDestroyAPIView
-):
+class ComentarioUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     """PATCH/DELETE de comentário individual.
 
     PATCH: owner only, dentro de 15min da criação.
@@ -262,9 +322,7 @@ class ComentarioUpdateDestroyView(
 def serializers_validation_error(code: str, message: str):
     from rest_framework.exceptions import ValidationError
 
-    return ValidationError(
-        {"code": code, "pastoral_message": message}
-    )
+    return ValidationError({"code": code, "pastoral_message": message})
 
 
 @method_decorator(
@@ -285,9 +343,7 @@ class ReacaoToggleView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: OpenApiResponse(
-                description='{"liked": bool, "like_count": int}'
-            )
+            200: OpenApiResponse(description='{"liked": bool, "like_count": int}')
         },
         summary="Toggle like de um post",
     )
@@ -302,11 +358,31 @@ class ReacaoToggleView(APIView):
                 },
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
-        post = get_object_or_404(Post, slug=slug, status=PostStatus.PUBLICADO)
+        post = Post.objects.filter(slug=slug, status=PostStatus.PUBLICADO).first()
+        espelho = None
+
+        try:
+            espelho = resolver_espelho(slug)
+        except PostNaoAceitaInteracao:
+            raise
+        except (PostNaoEncontrado, WordPressIndisponivel):
+            if post is None:
+                raise
+
+        if post is None and espelho is None:
+            raise PostNaoEncontrado()
+
+        # O filtro precisa casar a âncora que a linha realmente usa: um like
+        # gravado só no espelho não seria encontrado por `filter(post=post)`,
+        # e a pessoa acabaria com dois likes no mesmo post.
+        filtro = Q(post=post) if post is not None else Q(post_espelho=espelho)
+        if post is not None and espelho is not None:
+            filtro = Q(post=post) | Q(post_espelho=espelho)
+
         with transaction.atomic():
             existing = (
                 Reacao.objects.select_for_update()
-                .filter(post=post, customer=request.user, tipo=ReacaoTipo.LIKE)
+                .filter(filtro, customer=request.user, tipo=ReacaoTipo.LIKE)
                 .first()
             )
             if existing is not None:
@@ -314,10 +390,19 @@ class ReacaoToggleView(APIView):
                 liked = False
             else:
                 Reacao.objects.create(
-                    post=post, customer=request.user, tipo=ReacaoTipo.LIKE
+                    post=post,
+                    post_espelho=espelho,
+                    customer=request.user,
+                    tipo=ReacaoTipo.LIKE,
                 )
                 liked = True
-        return Response({"liked": liked, "like_count": post.like_count})
+
+        if post is not None:
+            contagem = post.like_count
+        else:
+            contagem = espelho.reacoes.filter(tipo=ReacaoTipo.LIKE).count()
+
+        return Response({"liked": liked, "like_count": contagem})
 
 
 class AdminCommentsViewSet(viewsets.ModelViewSet):
@@ -347,9 +432,9 @@ class AdminBannedCustomersViewSet(viewsets.ModelViewSet):
     (revoga por customer_id).
     """
 
-    queryset = CustomerBanido.objects.filter(
-        revogado_em__isnull=True
-    ).select_related("customer", "banido_por")
+    queryset = CustomerBanido.objects.filter(revogado_em__isnull=True).select_related(
+        "customer", "banido_por"
+    )
     permission_classes = [IsClamaAdmin]
     pagination_class = BlogPostPagination
     lookup_field = "customer_id"

@@ -175,3 +175,44 @@ class WordPressClient:
             total_paginas = 1
 
         return posts, total_paginas
+
+    def buscar_post_por_slug(self, slug: str) -> dict[str, Any] | None:
+        """Um post pelo slug, ou `None` se o WordPress disser que não existe.
+
+        `None` significa **o WordPress respondeu e não tem esse post**.
+        Impossibilidade de perguntar levanta `WordPressIndisponivel` — são
+        conclusões opostas, e confundi-las faria o Clama negar comentário por
+        falha de rede.
+        """
+        if not self.configurado:
+            raise WordPressIndisponivel(
+                message="WORDPRESS_API_URL/USER/APP_PASSWORD não configurados."
+            )
+
+        try:
+            resposta = self._get(
+                "/wp-json/wp/v2/posts",
+                slug=slug,
+                status="any",
+                context="edit",
+                per_page=1,
+                _fields="id,slug,title,status,date_gmt,link,password",
+            )
+        except requests.RequestException as exc:
+            raise WordPressIndisponivel(
+                message=f"Falha ao buscar post {slug!r} no WordPress: {exc}"
+            ) from exc
+
+        try:
+            posts = resposta.json()
+        except ValueError as exc:
+            raise WordPressIndisponivel(
+                message="Resposta do WordPress não é JSON."
+            ) from exc
+
+        if not isinstance(posts, list):
+            raise WordPressIndisponivel(
+                message="Resposta do WordPress não é uma lista de posts."
+            )
+
+        return posts[0] if posts else None
