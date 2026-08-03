@@ -681,3 +681,207 @@ def _data_do_wordpress(valor) -> datetime | None:
     if timezone.is_naive(parsed):
         return parsed.replace(tzinfo=UTC)
     return parsed
+
+
+# Monitoramento de desindexação silenciosa (Story 5.10).
+#
+# 🔴 **Condição de aceitação do ADR-03, não melhoria opcional.** Delegar o SEO
+# técnico do domínio inteiro ao WordPress é aceitável **apenas** com este
+# monitoramento — e inaceitável sem ele. Por isso a task vive no épico que
+# cria o risco, e não na fase de cutover.
+#
+# O interruptor que ela vigia: "Search Engine Visibility" no WordPress escreve
+# `Disallow: /` no robots.txt. Sob a ADR-03 esse arquivo é o de `clama.me`,
+# então um clique desindexaria a landing, a /conta e o fluxo de pedido junto.
+SEO_TIMEOUT_SEGUNDOS = 10
+
+
+@shared_task
+def monitorar_seo_do_dominio() -> dict:
+    """Vigia robots.txt, sitemap, noindex e a chave do IndexNow.
+
+    Returns:
+        Contadores e a lista de problemas, para inspeção em Flower e log.
+    """
+    base = (settings.FRONTEND_PUBLIC_BLOG_BASE_URL or "").rstrip("/")
+
+    resultado = {
+        "base": base,
+        "problemas": [],
+        "verificacoes": 0,
+    }
+
+    if not base:
+        resultado["problemas"].append(
+            {"tipo": "configuracao", "detalhe": "FRONTEND_PUBLIC_BLOG_BASE_URL vazio"}
+        )
+        return resultado
+
+    _checar_robots(base, resultado)
+    _checar_sitemap(base, resultado)
+    _checar_noindex(base, resultado)
+    _checar_chave_indexnow(base, resultado)
+
+    if resultado["problemas"]:
+        # Uma mensagem por execução, com todos os problemas: alertas separados
+        # por checagem produziriam quatro notificações para uma causa só.
+        detalhe = "; ".join(
+            f"{p['tipo']}: {p['detalhe']}" for p in resultado["problemas"]
+        )
+        logger.error(
+            "seo_do_dominio_com_problema",
+            extra={"event": "monitorar_seo_do_dominio", **resultado},
+        )
+        sentry_sdk.capture_message(
+            f"SEO do domínio comprometido — {detalhe}",
+            level="error",
+        )
+    else:
+        logger.info(
+            "seo_do_dominio_ok",
+            extra={"event": "monitorar_seo_do_dominio", **resultado},
+        )
+
+    return resultado
+
+
+def _buscar(url: str):
+    """GET tolerante. Devolve `(resposta, erro)`; nunca levanta."""
+    try:
+        return requests.get(url, timeout=SEO_TIMEOUT_SEGUNDOS), None
+    except requests.RequestException as exc:
+        return None, type(exc).__name__
+
+
+def _checar_robots(base: str, resultado: dict) -> None:
+    """AC1 e AC2 — conteúdo **e** disponibilidade, alertados separadamente.
+
+    O AC3 exige distinguir os dois: "conteúdo errado" e "indisponível" têm
+    causas e respostas diferentes. `Disallow: /` é alguém que clicou; 503 é a
+    origem caindo. Tratar igual mandaria investigar o lugar errado.
+    """
+    resultado["verificacoes"] += 1
+    resposta, erro = _buscar(f"{base}/robots.txt")
+
+    if erro or resposta is None:
+        resultado["problemas"].append(
+            {"tipo": "robots_indisponivel", "detalhe": erro or "sem resposta"}
+        )
+        return
+
+    if resposta.status_code != 200:
+        resultado["problemas"].append(
+            {
+                "tipo": "robots_indisponivel",
+                "detalhe": f"HTTP {resposta.status_code}",
+            }
+        )
+        return
+
+    # A linha exata. `Disallow: /admin/` contém "Disallow: /" como substring —
+    # comparar por substring produziria alarme em todo robots.txt saudável.
+    linhas = [linha.strip() for linha in resposta.text.splitlines()]
+    if any(linha.replace(" ", "").lower() == "disallow:/" for linha in linhas):
+        resultado["problemas"].append(
+            {
+                "tipo": "robots_bloqueia_tudo",
+                "detalhe": "robots.txt contém 'Disallow: /' — o domínio inteiro "
+                "sai do índice",
+            }
+        )
+
+
+def _checar_sitemap(base: str, resultado: dict) -> None:
+    """AC2 — qualquer status ≠ 200."""
+    resultado["verificacoes"] += 1
+    resposta, erro = _buscar(f"{base}/sitemap.xml")
+
+    if erro or resposta is None or resposta.status_code != 200:
+        detalhe = erro or (
+            f"HTTP {resposta.status_code}" if resposta else "sem resposta"
+        )
+        resultado["problemas"].append(
+            {"tipo": "sitemap_indisponivel", "detalhe": detalhe}
+        )
+
+
+def _checar_noindex(base: str, resultado: dict) -> None:
+    """AC4 — meta **e** header.
+
+    Os dois caminhos existem e são independentes: o WordPress emite a meta
+    quando `blog_public` é 0, e um plugin ou o próprio proxy pode emitir o
+    header. Checar só um deixaria metade do risco invisível.
+    """
+    resultado["verificacoes"] += 1
+    resposta, erro = _buscar(f"{base}/blog")
+
+    if erro or resposta is None:
+        resultado["problemas"].append(
+            {"tipo": "blog_indisponivel", "detalhe": erro or "sem resposta"}
+        )
+        return
+
+    if resposta.status_code != 200:
+        resultado["problemas"].append(
+            {
+                "tipo": "blog_indisponivel",
+                "detalhe": f"HTTP {resposta.status_code}",
+            }
+        )
+        return
+
+    cabecalho = resposta.headers.get("X-Robots-Tag", "").lower()
+    if "noindex" in cabecalho:
+        resultado["problemas"].append(
+            {
+                "tipo": "noindex_no_header",
+                "detalhe": f"X-Robots-Tag: {resposta.headers['X-Robots-Tag']}",
+            }
+        )
+
+    corpo = resposta.text[:200000].lower()
+    if 'name="robots"' in corpo and "noindex" in corpo:
+        resultado["problemas"].append(
+            {
+                "tipo": "noindex_na_meta",
+                "detalhe": "meta robots com noindex na listagem do blog",
+            }
+        )
+
+
+def _checar_chave_indexnow(base: str, resultado: dict) -> None:
+    """AC5 — a chave responde 200 na raiz.
+
+    Rotação ou regeneração da chave quebra o `FR48` **em silêncio**: o
+    `vercel.json` continua apontando para a chave velha, o Bing devolve 403, e
+    nada mais sinaliza. Esta é a única checagem que detecta.
+    """
+    chave = getattr(settings, "INDEXNOW_KEY", "") or ""
+
+    if not chave:
+        # Sem chave configurada não há o que vigiar — e não é problema, é
+        # ausência de recurso. Alertar aqui viraria ruído diário.
+        return
+
+    resultado["verificacoes"] += 1
+    resposta, erro = _buscar(f"{base}/{chave}.txt")
+
+    if erro or resposta is None or resposta.status_code != 200:
+        detalhe = erro or (
+            f"HTTP {resposta.status_code}" if resposta else "sem resposta"
+        )
+        resultado["problemas"].append(
+            {
+                "tipo": "chave_indexnow_inacessivel",
+                "detalhe": f"{detalhe} — submissões ao Bing param sem aviso",
+            }
+        )
+        return
+
+    if resposta.text.strip() != chave:
+        resultado["problemas"].append(
+            {
+                "tipo": "chave_indexnow_divergente",
+                "detalhe": "o arquivo na raiz não contém a chave configurada",
+            }
+        )

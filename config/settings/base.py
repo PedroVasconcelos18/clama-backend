@@ -7,6 +7,7 @@ https://docs.djangoproject.com/en/5.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
+
 import os
 from pathlib import Path
 
@@ -346,6 +347,21 @@ CELERY_BEAT_SCHEDULE = {
         # outros beats potenciais). 24h também seria ok pelo padrão de
         # uso atual; preferimos 6h pra detectar problema mais cedo.
         "schedule": crontab(minute=17, hour="*/6"),
+    },
+    "blog-monitorar-seo-do-dominio": {
+        "task": "clama.blog.tasks.monitorar_seo_do_dominio",
+        # 🔴 Story 5.10 — condição de aceitação do ADR-03.
+        #
+        # A cada 30 minutos. O que se vigia aqui não é performance, é um
+        # interruptor: "Search Engine Visibility" no WordPress escreve
+        # `Disallow: /` no robots.txt, e sob a ADR-03 esse arquivo é o de
+        # `clama.me` inteiro — landing, /conta e fluxo de pedido saem do
+        # índice junto com o blog.
+        #
+        # Meia hora é o atraso máximo entre o clique e o alerta. Reindexar o
+        # domínio depois de dias fora custa semanas; o custo desta checagem é
+        # quatro requisições HTTP.
+        "schedule": crontab(minute="*/30"),
     },
     "blog-reconciliar-espelho-wordpress": {
         "task": "clama.blog.tasks.reconciliar_espelho_com_wordpress",
