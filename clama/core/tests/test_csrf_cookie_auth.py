@@ -163,6 +163,15 @@ class TestEscopoDoCookie:
         for nome in (settings.AUTH_COOKIE_ACCESS, settings.AUTH_COOKIE_REFRESH):
             assert not resp.cookies[nome]["domain"]
 
+    def test_cookie_de_csrf_tambem_fica_escopado_em_api(self, client):
+        """
+        O default do Django é `Path=/`, o que enviaria o cookie de CSRF também
+        para `/blog/*` — entregando material de CSRF ao servidor WordPress, que
+        é zona de confiança inferior, sem ganho: a verificação só roda em /api/.
+        """
+        resp = client.get(reverse("core:csrf"))
+        assert resp.cookies[settings.CSRF_COOKIE_NAME]["path"] == "/api"
+
     def test_login_nao_devolve_token_no_corpo(self, customer):
         client = APIClient()
         resp = _login(client, customer.email)

@@ -438,6 +438,12 @@ SIMPLE_JWT = {
 # same-origin — ver o rewrite de `/api/*` no vercel.json.
 # Todo endpoint autenticado precisa viver sob esse prefixo; endpoint autenticado
 # novo fora dele é bug de segurança, não de roteamento.
+# O cookie de CSRF acompanha o escopo do cookie de autenticação. Com o default
+# `/` do Django ele seria enviado também para `/blog/*` — e sob a topologia de
+# subdiretório isso entrega material de CSRF ao servidor WordPress, que é zona
+# de confiança inferior, sem nenhum ganho: a verificação só acontece em `/api/`.
+CSRF_COOKIE_PATH = "/api"
+
 AUTH_COOKIE_ACCESS = "clama_access"
 AUTH_COOKIE_REFRESH = "clama_refresh"
 AUTH_COOKIE_PATH = "/api"
