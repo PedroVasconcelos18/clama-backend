@@ -2,12 +2,15 @@
 
 import factory
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from factory.django import DjangoModelFactory
 
 from clama.blog.models import (
     Comentario,
     CustomerBanido,
     Post,
+    PostEspelho,
+    PostEspelhoStatus,
     PostStatus,
     Reacao,
     ReacaoTipo,
@@ -45,6 +48,18 @@ class PostFactory(DjangoModelFactory):
     excerpt = factory.Faker("sentence", nb_words=10, locale="pt_BR")
     autor = factory.SubFactory(BlogUserFactory)
     status = PostStatus.RASCUNHO
+
+
+class PostEspelhoFactory(DjangoModelFactory):
+    class Meta:
+        model = PostEspelho
+
+    wp_post_id = factory.Sequence(lambda n: 1000 + n)
+    slug = factory.Sequence(lambda n: f"post-wp-{n}")
+    titulo = factory.Faker("sentence", nb_words=5, locale="pt_BR")
+    status = PostEspelhoStatus.PUBLICADO
+    published_at = factory.LazyFunction(timezone.now)
+    url = factory.LazyAttribute(lambda o: f"https://clama.me/blog/{o.slug}")
 
 
 class ComentarioFactory(DjangoModelFactory):

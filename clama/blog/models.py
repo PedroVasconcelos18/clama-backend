@@ -88,6 +88,84 @@ class Post(TimestampedModel):
         self.save()
 
 
+class PostEspelhoStatus(models.TextChoices):
+    """Status espelhados do WordPress.
+
+    Não reaproveita `PostStatus` de propósito: o WordPress tem estados que o
+    CMS próprio nunca teve (`private`, `future`, `trash`), e colapsá-los em
+    `rascunho`/`publicado` perderia justamente a informação que decide se o
+    widget de comentários aparece.
+    """
+
+    RASCUNHO = "rascunho", "Rascunho"
+    PUBLICADO = "publicado", "Publicado"
+    PRIVADO = "privado", "Privado"
+    AGENDADO = "agendado", "Agendado"
+    LIXEIRA = "lixeira", "Lixeira"
+    PENDENTE = "pendente", "Pendente de revisão"
+
+
+class PostEspelho(TimestampedModel):
+    """Espelho local dos posts que vivem no WordPress (ADR-02).
+
+    Existe para que moderação, resumo diário e dashboard continuem resolvendo
+    por join local em vez de uma chamada de rede por linha. **Não é fonte da
+    verdade** — o WordPress é. Nada aqui é editado por humano; o webhook da
+    Story 3.2 escreve, a reconciliação da Story 3.6 corrige.
+
+    O espelho **nunca apaga linha**: post removido no WordPress vira
+    `LIXEIRA`. Apagar aqui derrubaria o `PROTECT` das FKs de `Comentario` e
+    `Reacao`, que é o que preserva comentários e IPs sob a retenção de 6 meses
+    do Marco Civil.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wp_post_id = models.PositiveIntegerField(unique=True)
+    # `db_index=False` porque o índice nomeado está declarado no `Meta`.
+    # `SlugField` indexa por default, e deixar os dois cria duas árvores sobre
+    # a mesma coluna — custo de escrita dobrado por nada.
+    #
+    # Não é `unique`: no WordPress um post na lixeira libera o slug, então dois
+    # registros podem carregar o mesmo por um intervalo. A identidade aqui é
+    # `wp_post_id`.
+    slug = models.SlugField(max_length=200, db_index=False)
+    titulo = models.CharField(max_length=200)
+    status = models.CharField(
+        max_length=20,
+        choices=PostEspelhoStatus.choices,
+        default=PostEspelhoStatus.RASCUNHO,
+    )
+    published_at = models.DateTimeField(null=True, blank=True)
+    url = models.URLField(max_length=500, blank=True, default="")
+
+    class Meta:
+        verbose_name = "Post espelhado"
+        verbose_name_plural = "Posts espelhados"
+        ordering = ["-published_at", "-created_at"]
+        indexes = [
+            # Listagem de comentários no painel filtra por slug do post.
+            models.Index(fields=["slug"], name="idx_blog_postespelho_slug"),
+            models.Index(
+                fields=["status", "-published_at"],
+                name="idx_blog_postesp_status_pub",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.titulo
+
+    @property
+    def aceita_interacao(self) -> bool:
+        """Se comentário e reação podem ser criados neste post.
+
+        Rascunho, lixeira e agendado não aceitam — o post não está público, e
+        aceitar interação nele produziria comentário órfão de página visível.
+        `PRIVADO` também não: quem enxerga é o operador logado no WordPress,
+        e o widget do Clama não sabe disso.
+        """
+        return self.status == PostEspelhoStatus.PUBLICADO
+
+
 class ReacaoTipo(models.TextChoices):
     LIKE = "like", "Like"
     # DISLIKE = "dislike", "Dislike"  # reservado pra Growth pós-MVP
@@ -95,8 +173,19 @@ class ReacaoTipo(models.TextChoices):
 
 class Comentario(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    post = models.ForeignKey(
-        Post, on_delete=models.CASCADE, related_name="comentarios"
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="comentarios")
+    # Nullable de propósito: comentário novo em post do WordPress funciona de
+    # ponta a ponta antes de o Epic 4 fazer o backfill das linhas antigas.
+    #
+    # `PROTECT` e não `CASCADE`: apagar um post não pode apagar comentário nem
+    # o IP que fica sob a retenção de 6 meses do Marco Civil. O espelho também
+    # nunca apaga linha — post removido no WordPress vira `LIXEIRA`.
+    post_espelho = models.ForeignKey(
+        "PostEspelho",
+        on_delete=models.PROTECT,
+        related_name="comentarios",
+        null=True,
+        blank=True,
     )
     customer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -116,6 +205,13 @@ class Comentario(TimestampedModel):
                 fields=["post", "-created_at"],
                 name="idx_blog_comentario_post_crtd",
             ),
+            # Espelho do índice acima na coluna nova. Sem ele a listagem de
+            # comentários do painel faz seq scan assim que passar a filtrar
+            # por `post_espelho`.
+            models.Index(
+                fields=["post_espelho", "-created_at"],
+                name="idx_blog_coment_espelho_crtd",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -124,8 +220,13 @@ class Comentario(TimestampedModel):
 
 class Reacao(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    post = models.ForeignKey(
-        Post, on_delete=models.CASCADE, related_name="reacoes"
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="reacoes")
+    post_espelho = models.ForeignKey(
+        "PostEspelho",
+        on_delete=models.PROTECT,
+        related_name="reacoes",
+        null=True,
+        blank=True,
     )
     customer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -147,10 +248,23 @@ class Reacao(TimestampedModel):
                 fields=["post", "customer", "tipo"],
                 name="uniq_blog_reacao_post_customer_tipo",
             ),
+            # A constraint acima atravessa a coluna FK legada e **não protege
+            # a nova**: dois likes do mesmo customer no mesmo post pela coluna
+            # `post_espelho` passariam por ela sem esbarrar em nada.
+            #
+            # O Postgres trata NULL como distinto em unique, então esta aqui
+            # não bloqueia as linhas legadas — elas têm `post_espelho` nulo até
+            # o backfill do Epic 4, e NULL nunca conflita com NULL.
+            models.UniqueConstraint(
+                fields=["post_espelho", "customer", "tipo"],
+                name="uniq_blog_reacao_espelho_customer_tipo",
+            ),
         ]
         indexes = [
+            models.Index(fields=["post", "tipo"], name="idx_blog_reacao_post_tipo"),
             models.Index(
-                fields=["post", "tipo"], name="idx_blog_reacao_post_tipo"
+                fields=["post_espelho", "tipo"],
+                name="idx_blog_reacao_espelho_tipo",
             ),
         ]
 
