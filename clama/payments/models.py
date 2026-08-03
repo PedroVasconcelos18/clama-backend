@@ -13,6 +13,7 @@ class WebhookProvider(models.TextChoices):
     ASAAS = "ASAAS", "Asaas"
     ZAPI = "ZAPI", "Z-API"
     MERCADO_PAGO = "MERCADO_PAGO", "Mercado Pago"
+    WORDPRESS = "WORDPRESS", "WordPress"
 
 
 class WebhookEventoStatus(models.TextChoices):

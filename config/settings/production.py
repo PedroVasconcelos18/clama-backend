@@ -78,6 +78,9 @@ MIDDLEWARE = [  # noqa: F405
 # MERCADO PAGO WEBHOOK
 # ------------------------------------------------------------------------------
 MERCADOPAGO_WEBHOOK_SECRET = env("MERCADOPAGO_WEBHOOK_SECRET")
+# Sem default de propósito: subir produção sem este segredo tem que falhar
+# no boot, não render 401 silencioso em todo evento de publicação.
+WORDPRESS_WEBHOOK_SECRET = env("WORDPRESS_WEBHOOK_SECRET")
 
 # STORAGES
 # ------------------------------------------------------------------------------

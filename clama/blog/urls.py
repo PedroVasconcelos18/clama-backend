@@ -3,6 +3,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from .api.webhooks import WordPressWebhookView
 from .views import (
     AdminBannedCustomersViewSet,
     AdminCommentsViewSet,
@@ -15,9 +16,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r"blog/posts", PostViewSet, basename="blog-post")
-router.register(
-    r"blog/public/posts", PostPublicViewSet, basename="blog-post-public"
-)
+router.register(r"blog/public/posts", PostPublicViewSet, basename="blog-post-public")
 router.register(
     r"blog/admin/comments",
     AdminCommentsViewSet,
@@ -44,5 +43,12 @@ urlpatterns = router.urls + [
         "blog/posts/<slug:slug>/like/",
         ReacaoToggleView.as_view(),
         name="reacao-toggle",
+    ),
+    # Fora do prefixo `blog/` para casar o `PROTECTED_PATH` do middleware e
+    # ficar ao lado do webhook do Mercado Pago em `/api/webhooks/`.
+    path(
+        "webhooks/wordpress/",
+        WordPressWebhookView.as_view(),
+        name="wordpress-webhook",
     ),
 ]

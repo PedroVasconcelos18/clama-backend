@@ -147,6 +147,9 @@ MIDDLEWARE = [
     # Autentica o HMAC do webhook Mercado Pago antes de tocar a view (AD-3).
     # Em base.py (não só production) para staging/test também validarem.
     "clama.payments.middleware.MercadoPagoWebhookAuthMiddleware",
+    # Idem para o webhook de publicação do WordPress (Story 3.2). Antes do
+    # CSRF porque webhook não tem sessão nem token — a prova é o HMAC.
+    "clama.blog.middleware.WordPressWebhookAuthMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -490,6 +493,10 @@ FIELD_ENCRYPTION_KEY = env(
 # Note: os.environ.get for the token because django-environ interprets $ as a variable reference
 MERCADOPAGO_ACCESS_TOKEN = os.environ.get("MERCADOPAGO_ACCESS_TOKEN", "")
 MERCADOPAGO_WEBHOOK_SECRET = env("MERCADOPAGO_WEBHOOK_SECRET", default="")
+# Segredo do webhook de publicação do WordPress (Story 3.2). Default vazio
+# aqui e **sem default** em production.py: sem segredo o middleware devolve
+# 401 em tudo, que é a falha correta — o contrário abriria o endpoint.
+WORDPRESS_WEBHOOK_SECRET = env("WORDPRESS_WEBHOOK_SECRET", default="")
 # PIX aceita valores baixos (centavos), então o mínimo é 1 centavo — diferente do
 # mínimo de R$5,00 do gateway anterior. Usado pelo CheckoutView (MP.4).
 MERCADOPAGO_MIN_VALOR_CENTAVOS = env.int("MERCADOPAGO_MIN_VALOR_CENTAVOS", default=1)

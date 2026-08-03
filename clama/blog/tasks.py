@@ -23,7 +23,9 @@ from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 from django.conf import settings
 from django.core.mail import send_mail
+from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 logger = logging.getLogger("clama.blog.tasks")
 
@@ -68,7 +70,7 @@ def regenerar_blog_ssg(self, post_id: str) -> None:
         if status_code >= 500:
             # Servidor errado — vale tentar de novo
             try:
-                countdown = 30 * (2 ** self.request.retries)
+                countdown = 30 * (2**self.request.retries)
                 raise self.retry(exc=exc, countdown=countdown)
             except MaxRetriesExceededError:
                 logger.error(
@@ -94,7 +96,7 @@ def regenerar_blog_ssg(self, post_id: str) -> None:
             sentry_sdk.capture_exception(exc)
     except (requests.ConnectionError, requests.Timeout) as exc:
         try:
-            countdown = 30 * (2 ** self.request.retries)
+            countdown = 30 * (2**self.request.retries)
             raise self.retry(exc=exc, countdown=countdown)
         except MaxRetriesExceededError:
             logger.error(
@@ -233,8 +235,7 @@ def enviar_alerta_comentarios_diario() -> dict:
         }
 
     subject = (
-        f"Resumo de comentários do blog ({n_novos} novos, "
-        f"{n_suspeitos} suspeitos)"
+        f"Resumo de comentários do blog ({n_novos} novos, {n_suspeitos} suspeitos)"
     )
     linhas = [
         f"Resumo das últimas {COMENTARIOS_DIARIO_LOOKBACK.total_seconds() / 3600:.0f}h",
@@ -243,9 +244,7 @@ def enviar_alerta_comentarios_diario() -> dict:
     for c in novos:
         flag = " [SUSPEITO]" if c.is_suspeito else ""
         snippet = c.conteudo[:100] + ("…" if len(c.conteudo) > 100 else "")
-        linhas.append(
-            f"- /blog/{c.post.slug} | {c.customer.email}{flag}: {snippet}"
-        )
+        linhas.append(f"- /blog/{c.post.slug} | {c.customer.email}{flag}: {snippet}")
     linhas.append("")
     linhas.append("Modere em: /admin/blog/comentarios")
     body = "\n".join(linhas)
@@ -301,3 +300,112 @@ def purgar_ips_antigos() -> dict:
         extra={"event": "purgar_ips_antigos", "n_purgados": n_purgados},
     )
     return {"n_purgados": n_purgados}
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def sincronizar_post_espelho(self, webhook_evento_id: str) -> None:
+    """Aplica um evento do WordPress ao `PostEspelho` (Stories 3.2 e 3.3).
+
+    Idempotente: o efeito de aplicar o mesmo evento duas vezes é idêntico ao
+    de aplicá-lo uma — `update_or_create` por `wp_post_id`, sem acumular nada.
+
+    **Nunca apaga linha.** `post_removido` grava `LIXEIRA`. Apagar derrubaria
+    o `PROTECT` das FKs de `Comentario` e `Reacao`, que é o que preserva
+    comentários e IPs sob a retenção de 6 meses do Marco Civil.
+    """
+    from clama.blog.models import PostEspelho, PostEspelhoStatus
+    from clama.blog.services.wordpress_webhook import status_efetivo
+    from clama.payments.models import WebhookEvento, WebhookEventoStatus
+
+    try:
+        evento = WebhookEvento.objects.get(id=webhook_evento_id)
+    except WebhookEvento.DoesNotExist:
+        # Não retenta: se a linha não existe, ela não vai passar a existir.
+        logger.warning(
+            "sincronizar_post_espelho_evento_ausente",
+            extra={
+                "event": "sincronizar_post_espelho_skip",
+                "webhook_evento_id": webhook_evento_id,
+            },
+        )
+        return
+
+    if evento.status in (
+        WebhookEventoStatus.PROCESSADO,
+        WebhookEventoStatus.IGNORADO,
+    ):
+        logger.info(
+            "sincronizar_post_espelho_ja_terminal",
+            extra={
+                "event": "sincronizar_post_espelho_skip",
+                "webhook_evento_id": webhook_evento_id,
+                "status": evento.status,
+            },
+        )
+        return
+
+    payload = evento.payload or {}
+
+    try:
+        wp_post_id = int(payload.get("wp_post_id"))
+    except (TypeError, ValueError):
+        evento.status = WebhookEventoStatus.ERRO
+        evento.save(update_fields=["status", "updated_at"])
+        logger.warning(
+            "sincronizar_post_espelho_wp_post_id_invalido",
+            extra={
+                "event": "sincronizar_post_espelho_erro",
+                "webhook_evento_id": webhook_evento_id,
+            },
+        )
+        return
+
+    if evento.event_type == "post_removido":
+        # Remoção no WordPress = lixeira aqui. Ver docstring.
+        novo_status = PostEspelhoStatus.LIXEIRA
+    else:
+        novo_status = status_efetivo(
+            str(payload.get("status") or ""),
+            protegido_por_senha=_como_bool(payload.get("protegido_por_senha")),
+        )
+
+    published_at = parse_datetime(str(payload.get("published_at") or "")) or None
+    if published_at is not None and timezone.is_naive(published_at):
+        published_at = timezone.make_aware(published_at)
+
+    with transaction.atomic():
+        espelho, criado = PostEspelho.objects.update_or_create(
+            wp_post_id=wp_post_id,
+            defaults={
+                "slug": str(payload.get("slug") or "")[:200],
+                "titulo": str(payload.get("titulo") or "")[:200],
+                "status": novo_status,
+                "published_at": published_at,
+                "url": str(payload.get("url") or "")[:500],
+            },
+        )
+        evento.status = WebhookEventoStatus.PROCESSADO
+        evento.save(update_fields=["status", "updated_at"])
+
+    logger.info(
+        "sincronizar_post_espelho_ok",
+        extra={
+            "event": "sincronizar_post_espelho_ok",
+            "wp_post_id": wp_post_id,
+            "criado": criado,
+            "status": novo_status,
+            "espelho_id": str(espelho.id),
+        },
+    )
+
+
+def _como_bool(valor) -> bool:
+    """Interpreta o booleano que chega form-encoded.
+
+    Corpo form-encoded não tem tipo: o PHP manda `"1"`, `"true"` ou `""`, e
+    `bool("0")` em Python é `True`. Sem esta tradução, um post desprotegido
+    marcado com `"0"` viraria protegido.
+    """
+    if isinstance(valor, bool):
+        return valor
+    return str(valor).strip().lower() in {"1", "true", "yes", "on"}

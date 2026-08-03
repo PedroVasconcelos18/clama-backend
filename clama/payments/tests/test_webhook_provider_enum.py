@@ -11,4 +11,17 @@ def test_mercado_pago_provider_existe_com_valor_e_label():
 def test_providers_anteriores_permanecem():
     assert WebhookProvider.ASAAS == "ASAAS"
     assert WebhookProvider.ZAPI == "ZAPI"
-    assert set(WebhookProvider.values) == {"ASAAS", "ZAPI", "MERCADO_PAGO"}
+    assert set(WebhookProvider.values) == {
+        "ASAAS",
+        "ZAPI",
+        "MERCADO_PAGO",
+        "WORDPRESS",
+    }
+
+
+def test_wordpress_provider_existe_com_valor_e_label():
+    # O `provider` faz parte da chave de idempotência
+    # (`uq_webhook_event_provider_id`), então o webhook do WordPress reaproveita
+    # `WebhookEvento` sem precisar de tabela nova.
+    assert WebhookProvider.WORDPRESS == "WORDPRESS"
+    assert WebhookProvider.WORDPRESS.label == "WordPress"
