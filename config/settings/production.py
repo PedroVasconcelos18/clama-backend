@@ -81,11 +81,25 @@ MERCADOPAGO_WEBHOOK_SECRET = env("MERCADOPAGO_WEBHOOK_SECRET")
 # Sem default de propósito: subir produção sem este segredo tem que falhar
 # no boot, não render 401 silencioso em todo evento de publicação.
 WORDPRESS_WEBHOOK_SECRET = env("WORDPRESS_WEBHOOK_SECRET")
-# Idem: sem default. Boot alto é melhor que reconciliação abortando em
-# silêncio a cada 15 minutos por credencial ausente.
-WORDPRESS_API_URL = env("WORDPRESS_API_URL")
-WORDPRESS_API_USER = env("WORDPRESS_API_USER")
-WORDPRESS_API_APP_PASSWORD = env("WORDPRESS_API_APP_PASSWORD")
+
+# ⚠️ Estes TÊM default, e a distinção em relação ao segredo acima é o ponto.
+#
+# Eles também não tinham, e o resultado foi a API inteira recusando subir em
+# produção — `ImproperlyConfigured` no boot, deploy revertido — por causa de
+# uma integração de saída que ainda nem está ligada.
+#
+# A diferença: o segredo do webhook protege uma porta ABERTA. Ausente, o
+# endpoint existe e responde 401 em tudo — falha silenciosa que ninguém nota.
+# Falhar alto é o certo.
+#
+# Estes três são credencial de SAÍDA, para um cliente que só o Clama chama.
+# "Não configurado" é um estado operacional legítimo, e o código já o trata:
+# `resolver_espelho` devolve 404 (post não existe) em vez de 503, e a
+# reconciliação aborta por guarda. Acoplar a disponibilidade da API a eles
+# transforma uma funcionalidade opcional em ponto único de falha.
+WORDPRESS_API_URL = env("WORDPRESS_API_URL", default="")
+WORDPRESS_API_USER = env("WORDPRESS_API_USER", default="")
+WORDPRESS_API_APP_PASSWORD = env("WORDPRESS_API_APP_PASSWORD", default="")
 
 # STORAGES
 # ------------------------------------------------------------------------------
