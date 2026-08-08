@@ -226,9 +226,25 @@ class ComentarioListCreateView(generics.ListCreateAPIView):
                 Q(post=post) | Q(post_espelho__slug=slug)
             ).distinct()
 
-        espelho = PostEspelho.objects.filter(slug=slug).first()
-        if espelho is None:
-            raise Http404
+        # ⚠️ A leitura também resolve o espelho sob demanda.
+        #
+        # Antes ela só consultava o que já existia e levantava 404. A escrita
+        # resolvia, a leitura não — e o desenho supunha que o webhook do
+        # WordPress criaria o espelho no momento da publicação.
+        #
+        # **Esse webhook não existe**: o `WP-FR17` foi escrito só do lado
+        # receptor, e nada no WordPress o dispara. Sem ele nenhum post nasce
+        # com espelho, e o efeito para quem lê é o widget carregar, pedir os
+        # comentários, receber 404 e não deixar comentar — que foi exatamente
+        # o sintoma em produção.
+        #
+        # O custo é uma chamada externa na primeira leitura de cada post. Da
+        # segunda em diante é join local, porque o espelho fica gravado.
+        try:
+            espelho = resolver_espelho(slug)
+        except (PostNaoEncontrado, WordPressIndisponivel) as exc:
+            raise Http404 from exc
+
         return Comentario.objects.filter(post_espelho=espelho)
 
     def perform_create(self, serializer):
