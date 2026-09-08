@@ -28,6 +28,7 @@ class RepasseAdmin(admin.ModelAdmin):
         "percentual",
         "valor_centavos",
         "status",
+        "transferido_em",
         "created_at",
     )
     list_filter = ("status", "instituicao")
@@ -41,6 +42,8 @@ class RepasseAdmin(admin.ModelAdmin):
         "percentual",
         "valor_centavos",
         "status",
+        "transferido_em",
+        "comprovante",
         "created_at",
         "updated_at",
     )
