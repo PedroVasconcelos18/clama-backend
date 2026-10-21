@@ -316,6 +316,16 @@ if USE_TZ:
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/0")
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#std:setting-result_backend
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+# O proxy público do Railway derruba conexões ociosas; com socket_timeout=None
+# (default do kombu) o worker fica bloqueado numa conexão meio-aberta, "Online"
+# mas sem consumir a fila. Timeout (> brpop de 1s) força reconexão.
+# https://docs.celeryq.dev/en/stable/userguide/configuration.html#broker-transport-options
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "socket_timeout": 30,
+    "socket_connect_timeout": 10,
+    "socket_keepalive": True,
+}
+CELERY_REDIS_SOCKET_KEEPALIVE = True
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#result-extended
 CELERY_RESULT_EXTENDED = True
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#std:setting-accept_content
